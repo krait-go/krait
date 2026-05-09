@@ -9,6 +9,7 @@ import (
 // Severity represents the severity level of a finding.
 type Severity string
 
+// Severity constants define finding severity levels.
 const (
 	SeverityError   Severity = "error"
 	SeverityWarning Severity = "warning"
@@ -19,6 +20,7 @@ const (
 // Category represents the category of analysis.
 type Category string
 
+// Category constants define analysis categories.
 const (
 	CategoryDeadCode     Category = "dead-code"
 	CategoryDuplication  Category = "duplication"

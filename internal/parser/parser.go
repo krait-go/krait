@@ -38,7 +38,7 @@ func Parse(rootDir string, cfg *analyzer.Config) (*analyzer.Project, error) {
 		return nil, fmt.Errorf("parsing files: %w", err)
 	}
 
-	packages := groupIntoPackages(rootDir, modulePath, files, fset)
+	packages := groupIntoPackages(rootDir, modulePath, files)
 
 	return &analyzer.Project{
 		RootDir:    rootDir,
@@ -81,32 +81,16 @@ func parseGoMod(path string) (string, []analyzer.GoModDep, error) {
 			continue
 		}
 
-		if inRequire && trimmed != "" && !strings.HasPrefix(trimmed, "//") {
-			indirect := strings.Contains(trimmed, "// indirect")
-			parts := strings.Fields(trimmed)
-			if len(parts) >= 2 {
-				deps = append(deps, analyzer.GoModDep{
-					Path:     parts[0],
-					Version:  parts[1],
-					Indirect: indirect,
-					Line:     lineNum,
-				})
+		if inRequire {
+			if dep, ok := parseRequireEntry(trimmed, lineNum); ok {
+				deps = append(deps, dep)
 			}
+			continue
 		}
 
 		// Handle single-line require
-		if strings.HasPrefix(trimmed, "require ") && !strings.Contains(trimmed, "(") {
-			rest := strings.TrimPrefix(trimmed, "require ")
-			parts := strings.Fields(rest)
-			if len(parts) >= 2 {
-				indirect := strings.Contains(trimmed, "// indirect")
-				deps = append(deps, analyzer.GoModDep{
-					Path:     parts[0],
-					Version:  parts[1],
-					Indirect: indirect,
-					Line:     lineNum,
-				})
-			}
+		if dep, ok := parseSingleLineRequire(trimmed, lineNum); ok {
+			deps = append(deps, dep)
 		}
 	}
 
@@ -117,6 +101,41 @@ func parseGoMod(path string) (string, []analyzer.GoModDep, error) {
 	return modulePath, deps, nil
 }
 
+// parseRequireEntry parses a single dependency line inside a require ( ... ) block.
+func parseRequireEntry(trimmed string, lineNum int) (analyzer.GoModDep, bool) {
+	if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+		return analyzer.GoModDep{}, false
+	}
+	parts := strings.Fields(trimmed)
+	if len(parts) < 2 {
+		return analyzer.GoModDep{}, false
+	}
+	return analyzer.GoModDep{
+		Path:     parts[0],
+		Version:  parts[1],
+		Indirect: strings.Contains(trimmed, "// indirect"),
+		Line:     lineNum,
+	}, true
+}
+
+// parseSingleLineRequire parses a single-line require directive, e.g. `require foo v1.0.0`.
+func parseSingleLineRequire(trimmed string, lineNum int) (analyzer.GoModDep, bool) {
+	if !strings.HasPrefix(trimmed, "require ") || strings.Contains(trimmed, "(") {
+		return analyzer.GoModDep{}, false
+	}
+	rest := strings.TrimPrefix(trimmed, "require ")
+	parts := strings.Fields(rest)
+	if len(parts) < 2 {
+		return analyzer.GoModDep{}, false
+	}
+	return analyzer.GoModDep{
+		Path:     parts[0],
+		Version:  parts[1],
+		Indirect: strings.Contains(trimmed, "// indirect"),
+		Line:     lineNum,
+	}, true
+}
+
 // collectGoFiles walks the directory tree and returns all .go file paths.
 func collectGoFiles(rootDir string, cfg *analyzer.Config) ([]string, error) {
 	var files []string
@@ -124,42 +143,41 @@ func collectGoFiles(rootDir string, cfg *analyzer.Config) ([]string, error) {
 		if err != nil {
 			return err
 		}
-
 		if d.IsDir() {
-			rel := RelPath(rootDir, path)
-			// Skip hidden directories and vendor
-			if rel != "." && strings.HasPrefix(filepath.Base(path), ".") {
-				return filepath.SkipDir
-			}
-			if filepath.Base(path) == "vendor" {
-				return filepath.SkipDir
-			}
-			if filepath.Base(path) == "testdata" {
-				return filepath.SkipDir
-			}
-			return nil
+			return shouldSkipDir(path, rootDir)
 		}
-
-		if !strings.HasSuffix(path, ".go") {
-			return nil
+		if shouldIncludeFile(path, rootDir, cfg) {
+			files = append(files, path)
 		}
-
-		rel := RelPath(rootDir, path)
-
-		// Skip test files unless configured
-		if !cfg.IncludeTests && strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		// Apply ignore patterns
-		if MatchesAny(rel, cfg.IgnorePatterns) {
-			return nil
-		}
-
-		files = append(files, path)
 		return nil
 	})
 	return files, err
+}
+
+// shouldSkipDir returns filepath.SkipDir for directories that should be excluded
+// (hidden dirs, vendor, testdata), or nil to continue walking.
+func shouldSkipDir(path, rootDir string) error {
+	base := filepath.Base(path)
+	rel := RelPath(rootDir, path)
+	if rel != "." && strings.HasPrefix(base, ".") {
+		return filepath.SkipDir
+	}
+	if base == "vendor" || base == "testdata" {
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+// shouldIncludeFile reports whether a file path should be collected for parsing.
+func shouldIncludeFile(path, rootDir string, cfg *analyzer.Config) bool {
+	if !strings.HasSuffix(path, ".go") {
+		return false
+	}
+	if !cfg.IncludeTests && strings.HasSuffix(path, "_test.go") {
+		return false
+	}
+	rel := RelPath(rootDir, path)
+	return !MatchesAny(rel, cfg.IgnorePatterns)
 }
 
 // parseFilesParallel parses Go files concurrently.
@@ -216,7 +234,7 @@ func parseFilesParallel(fset *token.FileSet, paths []string) (map[string]*ast.Fi
 }
 
 // groupIntoPackages groups parsed files by their directory.
-func groupIntoPackages(rootDir, modulePath string, files map[string]*ast.File, fset *token.FileSet) map[string]*analyzer.PackageInfo {
+func groupIntoPackages(rootDir, modulePath string, files map[string]*ast.File) map[string]*analyzer.PackageInfo {
 	pkgs := make(map[string]*analyzer.PackageInfo)
 
 	for absPath, file := range files {

@@ -179,11 +179,11 @@ func initCmd() *cli.Command {
 				return err
 			}
 
-			if err := os.WriteFile(path, data, 0o644); err != nil {
+			if err := os.WriteFile(path, data, 0o600); err != nil {
 				return err
 			}
 
-			fmt.Fprintf(os.Stdout, "Created %s\n", path)
+			_, _ = fmt.Fprintf(os.Stdout, "Created %s\n", path)
 			return nil
 		},
 	}

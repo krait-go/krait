@@ -43,7 +43,9 @@ func (a *depsAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) 
 	unusedFindings, unusedCount := findUnusedDeps(directDeps, importFirstFile, cfg)
 	unlistedFindings, unlistedCount, externalImports := findUnlistedDeps(project, importFirstFile, cfg)
 
-	findings := append(unusedFindings, unlistedFindings...)
+	findings := make([]*analyzer.Finding, 0, len(unusedFindings)+len(unlistedFindings))
+	findings = append(findings, unusedFindings...)
+	findings = append(findings, unlistedFindings...)
 
 	elapsed := time.Since(start)
 	return &analyzer.Result{

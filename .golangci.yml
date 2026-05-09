@@ -1,76 +1,76 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
+  default: standard
   enable:
-    # Correctness
     - errcheck
     - errorlint
-    - govet
-    - staticcheck
-    - ineffassign
-    - unused
-
-    # Security
     - gosec
-
-    # Style and consistency
     - revive
     - gocritic
-    - gofumpt
     - misspell
     - unconvert
     - unparam
     - whitespace
-
-    # Bugs
     - bodyclose
     - nilerr
     - noctx
     - durationcheck
     - makezero
-    - exportloopref
-
-    # Complexity
     - gocyclo
     - gocognit
     - nestif
     - funlen
-
-    # Modern Go
     - intrange
 
-linters-settings:
-  goimports:
-    local-prefixes: github.com/krait-go/krait
-  gofumpt:
-    extra-rules: true
-  revive:
-    rules:
-      - name: exported
-      - name: var-naming
-      - name: error-strings
-  gosec:
-    excludes:
-      - G304
-  gocyclo:
-    min-complexity: 15
-  gocognit:
-    min-complexity: 20
-  funlen:
-    lines: 100
-    statements: 60
-  nestif:
-    min-complexity: 5
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/krait-go/krait
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: error-strings
+    gosec:
+      excludes:
+        - G304
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    funlen:
+      lines: 100
+      statements: 60
+    nestif:
+      min-complexity: 5
+
+formatters:
+  enable:
+    - goimports
+    - gofumpt
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/krait-go/krait
+    gofumpt:
+      extra-rules: true
 
 issues:
-  exclude-rules:
-    - path: "_test\\.go"
-      linters:
-        - errcheck
-        - funlen
-        - gocyclo
-        - gocognit
-
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - paths:
+          - "_test\\.go"
+        linters:
+          - errcheck
+          - funlen
+          - gocyclo
+          - gocognit

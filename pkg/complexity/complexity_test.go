@@ -11,7 +11,7 @@ import (
 )
 
 // parseFuncDecl parses src as a Go file and returns the first *ast.FuncDecl.
-func parseFuncDecl(t *testing.T, src string) (*ast.FuncDecl, *token.FileSet) {
+func parseFuncDecl(t *testing.T, src string) *ast.FuncDecl {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := goparser.ParseFile(fset, "test.go", src, 0)
@@ -20,17 +20,17 @@ func parseFuncDecl(t *testing.T, src string) (*ast.FuncDecl, *token.FileSet) {
 	}
 	for _, decl := range f.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
-			return fn, fset
+			return fn
 		}
 	}
 	t.Fatal("no FuncDecl found in source")
-	return nil, nil
+	return nil
 }
 
 func TestComputeCyclomatic_EmptyFunction(t *testing.T) {
 	src := `package p
 func empty() {}`
-	fn, _ := parseFuncDecl(t, src)
+	fn := parseFuncDecl(t, src)
 	got := computeCyclomatic(fn)
 	if got != 1 {
 		t.Errorf("empty function: cyclomatic = %d, want 1", got)
@@ -43,7 +43,7 @@ func f(x int) {
 	if x > 0 {
 	}
 }`
-	fn, _ := parseFuncDecl(t, src)
+	fn := parseFuncDecl(t, src)
 	got := computeCyclomatic(fn)
 	if got != 2 {
 		t.Errorf("single if: cyclomatic = %d, want 2", got)
@@ -58,7 +58,7 @@ func f(items []int) {
 		}
 	}
 }`
-	fn, _ := parseFuncDecl(t, src)
+	fn := parseFuncDecl(t, src)
 	got := computeCyclomatic(fn)
 	// 1 base + 1 range + 1 if = 3
 	if got != 3 {
@@ -71,7 +71,7 @@ func TestComputeCyclomatic_LogicalOperators(t *testing.T) {
 func f(a, b, c bool) bool {
 	return a && b || c
 }`
-	fn, _ := parseFuncDecl(t, src)
+	fn := parseFuncDecl(t, src)
 	got := computeCyclomatic(fn)
 	// 1 base + 1 && + 1 || = 3
 	// Note: the return statement has a BinaryExpr (||) whose X is another BinaryExpr (&&)
@@ -90,7 +90,7 @@ func f(x int) {
 	case 3:
 	}
 }`
-	fn, _ := parseFuncDecl(t, src)
+	fn := parseFuncDecl(t, src)
 	got := computeCyclomatic(fn)
 	// 1 base + 3 non-default case clauses = 4
 	if got != 4 {

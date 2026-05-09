@@ -133,7 +133,7 @@ func indexOf(data []byte, b byte) int {
 func stripLineComment(line []byte) []byte {
 	inString := false
 	escaped := false
-	for i := 0; i < len(line); i++ {
+	for i := range line {
 		if escaped {
 			escaped = false
 			continue

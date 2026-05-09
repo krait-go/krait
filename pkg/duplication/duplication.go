@@ -291,7 +291,7 @@ func fingerprintStatements(stmts []ast.Stmt) uint64 {
 	h := fnv.New64a()
 	for i, stmt := range stmts {
 		if i > 0 {
-			h.Write([]byte{0xFF}) // delimiter between statements
+			_, _ = h.Write([]byte{0xFF}) // delimiter between statements
 		}
 		fingerprintNode(h, stmt)
 	}
@@ -306,19 +306,19 @@ func fingerprintNode(h hash.Hash64, node ast.Node) {
 			return false
 		}
 		// Write node type.
-		h.Write([]byte(reflect.TypeOf(n).String()))
+		_, _ = h.Write([]byte(reflect.TypeOf(n).String()))
 
 		switch x := n.(type) {
 		case *ast.BinaryExpr:
-			h.Write([]byte(x.Op.String()))
+			_, _ = h.Write([]byte(x.Op.String()))
 		case *ast.UnaryExpr:
-			h.Write([]byte(x.Op.String()))
+			_, _ = h.Write([]byte(x.Op.String()))
 		case *ast.AssignStmt:
-			h.Write([]byte(x.Tok.String()))
+			_, _ = h.Write([]byte(x.Tok.String()))
 		case *ast.SelectorExpr:
-			h.Write([]byte(x.Sel.Name))
+			_, _ = h.Write([]byte(x.Sel.Name))
 		case *ast.BasicLit:
-			h.Write([]byte(x.Kind.String()))
+			_, _ = h.Write([]byte(x.Kind.String()))
 		case *ast.Ident:
 			// Excluded intentionally — catches renamed clones.
 		}

@@ -351,12 +351,13 @@ func buildImportMap(file *ast.File) map[string]string {
 		}
 		importPath := strings.Trim(imp.Path.Value, `"`)
 		var localName string
-		if imp.Name != nil && imp.Name.Name != "_" && imp.Name.Name != "." {
+		switch {
+		case imp.Name != nil && imp.Name.Name != "_" && imp.Name.Name != ".":
 			localName = imp.Name.Name
-		} else if imp.Name != nil {
+		case imp.Name != nil:
 			// Blank or dot import — skip; we cannot resolve selector targets.
 			continue
-		} else {
+		default:
 			// Default local name is the last path segment.
 			localName = filepath.Base(importPath)
 		}
