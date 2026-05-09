@@ -23,6 +23,9 @@ coverage.html
 # Claude Code
 .claude/
 
+# Code Review Graph
+.code-review-graph/
+
 # Internal docs
 spec.md
 

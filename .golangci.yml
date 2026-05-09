@@ -1,10 +1,7 @@
-version: "2"
-
 run:
   timeout: 5m
 
 linters:
-  default: standard
   enable:
     - errcheck
     - errorlint
@@ -30,13 +27,10 @@ linters-settings:
       - G304
 
 issues:
-  exclusions:
-    presets:
-      - std-error-handling
-      - common-false-positives
-    rules:
-      - linters: [errcheck]
-        path: "_test\\.go"
+  exclude-rules:
+    - path: "_test\\.go"
+      linters:
+        - errcheck
 
   max-issues-per-linter: 0
   max-same-issues: 0
