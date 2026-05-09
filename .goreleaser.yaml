@@ -41,6 +41,7 @@ brews:
   - repository:
       owner: krait-go
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/krait-go/krait"
     description: "Unified codebase health analyzer for Go"
