@@ -27,9 +27,6 @@ linters:
     - intrange
 
   settings:
-    goimports:
-      local-prefixes:
-        - github.com/krait-go/krait
     revive:
       rules:
         - name: exported
@@ -48,6 +45,19 @@ linters:
     nestif:
       min-complexity: 5
 
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - funlen
+          - gocyclo
+          - gocognit
+          - gosec
+
 formatters:
   enable:
     - goimports
@@ -62,15 +72,3 @@ formatters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclusions:
-    presets:
-      - std-error-handling
-      - common-false-positives
-    rules:
-      - paths:
-          - "_test\\.go"
-        linters:
-          - errcheck
-          - funlen
-          - gocyclo
-          - gocognit
