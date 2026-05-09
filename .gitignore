@@ -31,6 +31,9 @@ lefthook-local.yml
 
 # Internal docs
 spec.md
+CLAUDE.md
+docs/superpowers/
+docs/learning/
 
 # OS
 .DS_Store
