@@ -1,0 +1,38 @@
+# Binaries
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+krait
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Task runner
+.task/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+
+# Internal docs
+spec.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vendor (if used)
+vendor/
+
+# Build
+*.test
+*.prof
