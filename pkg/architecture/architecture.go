@@ -39,8 +39,27 @@ func (a *architectureAnalyzer) Description() string {
 func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) (*analyzer.Result, error) {
 	start := time.Now()
 
-	// Step 1: Build internal dependency graph.
-	// metrics keyed by import path.
+	metrics := buildDependencyGraph(project)
+	computeCoupling(metrics)
+	assignLayers(metrics, cfg)
+
+	layerCanImport := buildLayerCanImport(cfg)
+	findings, totalEdges := detectViolations(project, metrics, cfg, layerCanImport)
+	stats := buildArchStats(metrics, totalEdges)
+
+	elapsed := time.Since(start)
+	return &analyzer.Result{
+		Analyzer:   a.Name(),
+		Duration:   elapsed,
+		DurationMs: elapsed.Milliseconds(),
+		Findings:   findings,
+		Stats:      stats,
+	}, nil
+}
+
+// buildDependencyGraph constructs a map of pkgMetrics keyed by import path.
+// Each entry lists the unique internal imports of that package.
+func buildDependencyGraph(project *analyzer.Project) map[string]*pkgMetrics {
 	metrics := make(map[string]*pkgMetrics)
 	for importPath, pkg := range project.Packages {
 		m := &pkgMetrics{
@@ -48,7 +67,6 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 			RelPath:    pkg.RelPath,
 			FileCount:  len(pkg.Files),
 		}
-		// Collect unique internal imports.
 		seen := make(map[string]bool)
 		for _, file := range pkg.Files {
 			for _, imp := range file.Imports {
@@ -56,10 +74,7 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 					continue
 				}
 				depPath := strings.Trim(imp.Path.Value, `"`)
-				if !strings.HasPrefix(depPath, project.ModulePath) {
-					continue
-				}
-				if seen[depPath] {
+				if !strings.HasPrefix(depPath, project.ModulePath) || seen[depPath] {
 					continue
 				}
 				seen[depPath] = true
@@ -68,8 +83,11 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 		}
 		metrics[importPath] = m
 	}
+	return metrics
+}
 
-	// Step 2: Compute Ca/Ce and populate ImportedBy.
+// computeCoupling fills in Ca, Ce, Instability, and ImportedBy for all packages.
+func computeCoupling(metrics map[string]*pkgMetrics) {
 	for importPath, m := range metrics {
 		m.Ce = len(m.Imports)
 		for _, dep := range m.Imports {
@@ -79,32 +97,36 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 			}
 		}
 	}
-
-	// Compute instability: Ce / (Ca + Ce). Packages with no edges are stable (0.0).
 	for _, m := range metrics {
 		if m.Ca+m.Ce > 0 {
 			m.Instability = float64(m.Ce) / float64(m.Ca+m.Ce)
 		}
 	}
+}
 
-	// Step 3: Assign layers if configured.
-	if len(cfg.ArchitectureLayers) > 0 {
-		for _, m := range metrics {
-			for _, layer := range cfg.ArchitectureLayers {
-				for _, pattern := range layer.Packages {
-					if matchLayerPattern(m.RelPath, pattern) {
-						m.Layer = layer.Name
-						break
-					}
-				}
-				if m.Layer != "" {
+// assignLayers sets the Layer field on each pkgMetrics entry based on the
+// configured architecture layers and their package patterns.
+func assignLayers(metrics map[string]*pkgMetrics, cfg *analyzer.Config) {
+	if len(cfg.ArchitectureLayers) == 0 {
+		return
+	}
+	for _, m := range metrics {
+		for _, layer := range cfg.ArchitectureLayers {
+			for _, pattern := range layer.Packages {
+				if matchLayerPattern(m.RelPath, pattern) {
+					m.Layer = layer.Name
 					break
 				}
 			}
+			if m.Layer != "" {
+				break
+			}
 		}
 	}
+}
 
-	// Build layer → CanImport lookup.
+// buildLayerCanImport returns a lookup map of layer name -> allowed import layer names.
+func buildLayerCanImport(cfg *analyzer.Config) map[string]map[string]bool {
 	layerCanImport := make(map[string]map[string]bool)
 	for _, layer := range cfg.ArchitectureLayers {
 		allowed := make(map[string]bool)
@@ -113,85 +135,110 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 		}
 		layerCanImport[layer.Name] = allowed
 	}
+	return layerCanImport
+}
 
-	// Step 4: Find violations and god packages.
+// detectViolations walks all packages and emits findings for layer violations
+// and god packages. It also accumulates the total dependency edge count.
+func detectViolations(
+	project *analyzer.Project,
+	metrics map[string]*pkgMetrics,
+	cfg *analyzer.Config,
+	layerCanImport map[string]map[string]bool,
+) ([]*analyzer.Finding, int) {
 	var findings []*analyzer.Finding
 	totalEdges := 0
-
 	for _, m := range metrics {
 		totalEdges += m.Ce
+		findings = append(findings, detectLayerViolations(project, m, metrics, cfg, layerCanImport)...)
+		findings = append(findings, detectGodPackage(m, cfg)...)
+	}
+	return findings, totalEdges
+}
 
-		// --- Layer violation check ---
-		if len(cfg.ArchitectureLayers) > 0 && m.Layer != "" {
-			allowed := layerCanImport[m.Layer]
-			srcPkg := project.Packages[m.ImportPath]
-
-			for _, depPath := range m.Imports {
-				depMetrics, ok := metrics[depPath]
-				if !ok {
-					continue
-				}
-				tgtLayer := depMetrics.Layer
-				if tgtLayer == "" || tgtLayer == m.Layer {
-					// Same layer or unmapped target — allowed.
-					continue
-				}
-				if allowed[tgtLayer] {
-					continue
-				}
-
-				// Find the position of this import in the source files.
-				loc := findImportLocation(project, srcPkg, depPath)
-
-				sev, ok := analyzer.ResolveSeverity("layer-violation", analyzer.SeverityError, cfg)
-				if !ok {
-					continue
-				}
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "layer-violation",
-					Category: analyzer.CategoryArchitecture,
-					Severity: sev,
-					Message:  "Layer \"" + m.Layer + "\" must not import layer \"" + tgtLayer + "\"",
-					Location: loc,
-					Meta: map[string]any{
-						"source_layer":    m.Layer,
-						"target_layer":    tgtLayer,
-						"import":          depPath,
-						"source_package":  m.RelPath,
-					},
-				})
-			}
-		}
-
-		// --- God package check ---
-		threshold := cfg.GodPackageThreshold
-		if threshold <= 0 {
-			threshold = 10
-		}
-		if m.Ce > threshold {
-			sev, ok := analyzer.ResolveSeverity("god-package", analyzer.SeverityWarning, cfg)
-			if ok {
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "god-package",
-					Category: analyzer.CategoryArchitecture,
-					Severity: sev,
-					Message:  "Package \"" + m.RelPath + "\" has too many internal imports (" + strconv.Itoa(m.Ce) + " > " + strconv.Itoa(threshold) + ")",
-					Location: analyzer.Location{
-						File: m.RelPath,
-						Line: 1,
-					},
-					Meta: map[string]any{
-						"package":      m.RelPath,
-						"import_count": m.Ce,
-						"imported_by":  m.Ca,
-						"instability":  m.Instability,
-					},
-				})
-			}
-		}
+// detectLayerViolations returns findings for each import from m that crosses a
+// forbidden layer boundary.
+func detectLayerViolations(
+	project *analyzer.Project,
+	m *pkgMetrics,
+	metrics map[string]*pkgMetrics,
+	cfg *analyzer.Config,
+	layerCanImport map[string]map[string]bool,
+) []*analyzer.Finding {
+	if len(cfg.ArchitectureLayers) == 0 || m.Layer == "" {
+		return nil
 	}
 
-	// Step 5: Build stats.
+	allowed := layerCanImport[m.Layer]
+	srcPkg := project.Packages[m.ImportPath]
+	var findings []*analyzer.Finding
+
+	for _, depPath := range m.Imports {
+		depMetrics, ok := metrics[depPath]
+		if !ok {
+			continue
+		}
+		tgtLayer := depMetrics.Layer
+		if tgtLayer == "" || tgtLayer == m.Layer || allowed[tgtLayer] {
+			continue
+		}
+
+		loc := findImportLocation(project, srcPkg, depPath)
+		sev, ok := analyzer.ResolveSeverity("layer-violation", analyzer.SeverityError, cfg)
+		if !ok {
+			continue
+		}
+		findings = append(findings, &analyzer.Finding{
+			Rule:     "layer-violation",
+			Category: analyzer.CategoryArchitecture,
+			Severity: sev,
+			Message:  "Layer \"" + m.Layer + "\" must not import layer \"" + tgtLayer + "\"",
+			Location: loc,
+			Meta: map[string]any{
+				"source_layer":   m.Layer,
+				"target_layer":   tgtLayer,
+				"import":         depPath,
+				"source_package": m.RelPath,
+			},
+		})
+	}
+	return findings
+}
+
+// detectGodPackage returns a finding if the package exceeds the god-package
+// import threshold.
+func detectGodPackage(m *pkgMetrics, cfg *analyzer.Config) []*analyzer.Finding {
+	threshold := cfg.GodPackageThreshold
+	if threshold <= 0 {
+		threshold = 10
+	}
+	if m.Ce <= threshold {
+		return nil
+	}
+	sev, ok := analyzer.ResolveSeverity("god-package", analyzer.SeverityWarning, cfg)
+	if !ok {
+		return nil
+	}
+	return []*analyzer.Finding{{
+		Rule:     "god-package",
+		Category: analyzer.CategoryArchitecture,
+		Severity: sev,
+		Message:  "Package \"" + m.RelPath + "\" has too many internal imports (" + strconv.Itoa(m.Ce) + " > " + strconv.Itoa(threshold) + ")",
+		Location: analyzer.Location{
+			File: m.RelPath,
+			Line: 1,
+		},
+		Meta: map[string]any{
+			"package":      m.RelPath,
+			"import_count": m.Ce,
+			"imported_by":  m.Ca,
+			"instability":  m.Instability,
+		},
+	}}
+}
+
+// buildArchStats constructs the stats map for the result.
+func buildArchStats(metrics map[string]*pkgMetrics, totalEdges int) map[string]any {
 	pkgMetricsList := make([]map[string]any, 0, len(metrics))
 	for _, m := range metrics {
 		pkgMetricsList = append(pkgMetricsList, map[string]any{
@@ -202,19 +249,11 @@ func (a *architectureAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.
 			"file_count":  m.FileCount,
 		})
 	}
-
-	elapsed := time.Since(start)
-	return &analyzer.Result{
-		Analyzer:   a.Name(),
-		Duration:   elapsed,
-		DurationMs: elapsed.Milliseconds(),
-		Findings:   findings,
-		Stats: map[string]any{
-			"total_packages":   len(metrics),
-			"dependency_edges": totalEdges,
-			"package_metrics":  pkgMetricsList,
-		},
-	}, nil
+	return map[string]any{
+		"total_packages":   len(metrics),
+		"dependency_edges": totalEdges,
+		"package_metrics":  pkgMetricsList,
+	}
 }
 
 // matchLayerPattern checks if a package's relPath belongs to a layer pattern.
@@ -284,4 +323,3 @@ func findImportLocation(project *analyzer.Project, pkg *analyzer.PackageInfo, im
 	}
 	return analyzer.Location{Line: 1}
 }
-

@@ -1,3 +1,4 @@
+// Package reporter formats analysis reports into various output formats.
 package reporter
 
 import (

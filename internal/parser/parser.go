@@ -1,3 +1,4 @@
+// Package parser provides shared Go AST parsing utilities used by all analyzers.
 package parser
 
 import (
@@ -270,44 +271,43 @@ func MatchesAny(relPath string, patterns []string) bool {
 
 // matchPattern matches a path against a pattern that may contain **.
 func matchPattern(path, pattern string) bool {
-	// Handle ** patterns
 	if strings.Contains(pattern, "**") {
-		// Split pattern around **
-		parts := strings.Split(pattern, "**")
-		if len(parts) == 2 {
-			prefix := strings.Trim(parts[0], "/")
-			suffix := strings.Trim(parts[1], "/")
-
-			if prefix == "" && suffix == "" {
-				return true
-			}
-
-			if prefix != "" && suffix == "" {
-				return strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix)
-			}
-
-			if prefix == "" && suffix != "" {
-				if matched, _ := filepath.Match(suffix, filepath.Base(path)); matched {
-					return true
-				}
-				return strings.HasSuffix(path, suffix)
-			}
-
-			// Both prefix and suffix
-			return (strings.Contains(path, prefix+"/") || strings.HasPrefix(path, prefix)) &&
-				(strings.HasSuffix(path, suffix) || strings.Contains(path, suffix+"/"))
-		}
+		return matchDoubleStarPattern(path, pattern)
 	}
-
-	// Simple glob match
-	matched, _ := filepath.Match(pattern, path)
-	if matched {
+	// Simple glob match against the full path, then the filename.
+	if matched, _ := filepath.Match(pattern, path); matched {
 		return true
 	}
-
-	// Also try matching against just the filename
-	matched, _ = filepath.Match(pattern, filepath.Base(path))
+	matched, _ := filepath.Match(pattern, filepath.Base(path))
 	return matched
+}
+
+// matchDoubleStarPattern handles patterns containing **, splitting on the first
+// ** to derive a prefix and suffix anchor and testing both against the path.
+func matchDoubleStarPattern(path, pattern string) bool {
+	parts := strings.Split(pattern, "**")
+	if len(parts) != 2 {
+		return false
+	}
+	prefix := strings.Trim(parts[0], "/")
+	suffix := strings.Trim(parts[1], "/")
+
+	if prefix == "" && suffix == "" {
+		return true
+	}
+	if prefix != "" && suffix == "" {
+		return strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix)
+	}
+	if prefix == "" {
+		// suffix-only: match against filename or path suffix
+		if matched, _ := filepath.Match(suffix, filepath.Base(path)); matched {
+			return true
+		}
+		return strings.HasSuffix(path, suffix)
+	}
+	// Both prefix and suffix present.
+	return (strings.Contains(path, prefix+"/") || strings.HasPrefix(path, prefix)) &&
+		(strings.HasSuffix(path, suffix) || strings.Contains(path, suffix+"/"))
 }
 
 // IsExported reports whether a name is exported.

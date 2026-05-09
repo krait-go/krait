@@ -1,3 +1,4 @@
+// Package config handles loading and validating krait configuration files.
 package config
 
 import (

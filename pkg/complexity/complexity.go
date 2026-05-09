@@ -86,103 +86,147 @@ func (w *cognitiveWalker) walkStmtList(stmts []ast.Stmt, depth int) {
 	}
 }
 
+// walkStmt dispatches to the appropriate handler based on the statement type.
+// Control-flow statements are handled by walkControlFlowStmt; expression and
+// misc statements are handled by walkExprStmt.
 func (w *cognitiveWalker) walkStmt(stmt ast.Stmt, depth int) {
 	if stmt == nil {
 		return
 	}
+	if !w.walkControlFlowStmt(stmt, depth) {
+		w.walkExprStmt(stmt, depth)
+	}
+}
+
+// walkControlFlowStmt handles structurally significant statements that affect
+// nesting depth. Returns true if the statement was handled.
+func (w *cognitiveWalker) walkControlFlowStmt(stmt ast.Stmt, depth int) bool {
 	switch s := stmt.(type) {
 	case *ast.IfStmt:
 		w.walkIfStmt(s, depth, false)
-
 	case *ast.ForStmt:
-		w.score += 1 + depth
-		var body []ast.Stmt
-		if s.Body != nil {
-			body = s.Body.List
-		}
-		w.walkStmtList(body, depth+1)
-
+		w.walkForStmt(s, depth)
 	case *ast.RangeStmt:
-		w.score += 1 + depth
-		var body []ast.Stmt
-		if s.Body != nil {
-			body = s.Body.List
-		}
-		w.walkStmtList(body, depth+1)
-
+		w.walkRangeStmt(s, depth)
 	case *ast.SwitchStmt:
-		w.score += 1 + depth
-		if s.Body != nil {
-			for _, cc := range s.Body.List {
-				if clause, ok := cc.(*ast.CaseClause); ok {
-					w.walkStmtList(clause.Body, depth+1)
-				}
-			}
-		}
-
+		w.walkSwitchStmt(s, depth)
 	case *ast.TypeSwitchStmt:
-		w.score += 1 + depth
-		if s.Body != nil {
-			for _, cc := range s.Body.List {
-				if clause, ok := cc.(*ast.CaseClause); ok {
-					w.walkStmtList(clause.Body, depth+1)
-				}
-			}
-		}
-
+		w.walkTypeSwitchStmt(s, depth)
 	case *ast.SelectStmt:
-		w.score += 1 + depth
-		if s.Body != nil {
-			for _, cc := range s.Body.List {
-				if clause, ok := cc.(*ast.CommClause); ok {
-					w.walkStmtList(clause.Body, depth+1)
-				}
-			}
-		}
-
+		w.walkSelectStmt(s, depth)
 	case *ast.BranchStmt:
-		// goto, labeled break/continue each add +1
-		if s.Label != nil && (s.Tok == token.BREAK || s.Tok == token.CONTINUE) {
-			w.score++
-		}
-		if s.Tok == token.GOTO {
-			w.score++
-		}
-
+		w.walkBranchStmt(s)
 	case *ast.BlockStmt:
 		w.walkStmtList(s.List, depth)
+	default:
+		return false
+	}
+	return true
+}
 
+// walkExprStmt handles expression-level statements that may contain function
+// literals or other nested expressions worth scoring.
+func (w *cognitiveWalker) walkExprStmt(stmt ast.Stmt, depth int) {
+	switch s := stmt.(type) {
 	case *ast.ExprStmt:
 		w.walkExprForFuncLit(s.X, depth)
-
 	case *ast.AssignStmt:
-		for _, rhs := range s.Rhs {
-			w.walkExprForFuncLit(rhs, depth)
-		}
-
+		w.walkAssignStmt(s, depth)
 	case *ast.ReturnStmt:
-		for _, result := range s.Results {
-			w.walkExprForFuncLit(result, depth)
-		}
-
+		w.walkReturnStmt(s, depth)
 	case *ast.DeferStmt:
-		if s.Call != nil {
-			w.walkExprForFuncLit(s.Call.Fun, depth)
-		}
-
+		w.walkDeferStmt(s, depth)
 	case *ast.GoStmt:
-		if s.Call != nil {
-			w.walkExprForFuncLit(s.Call.Fun, depth)
-		}
-
+		w.walkGoStmt(s, depth)
 	case *ast.SendStmt:
 		w.walkExprForFuncLit(s.Value, depth)
-
-	case *ast.IncDecStmt:
-		// no structural complexity
-
 	case *ast.LabeledStmt:
 		w.walkStmt(s.Stmt, depth)
+	}
+}
+
+func (w *cognitiveWalker) walkForStmt(s *ast.ForStmt, depth int) {
+	w.score += 1 + depth
+	var body []ast.Stmt
+	if s.Body != nil {
+		body = s.Body.List
+	}
+	w.walkStmtList(body, depth+1)
+}
+
+func (w *cognitiveWalker) walkRangeStmt(s *ast.RangeStmt, depth int) {
+	w.score += 1 + depth
+	var body []ast.Stmt
+	if s.Body != nil {
+		body = s.Body.List
+	}
+	w.walkStmtList(body, depth+1)
+}
+
+func (w *cognitiveWalker) walkSwitchStmt(s *ast.SwitchStmt, depth int) {
+	w.score += 1 + depth
+	if s.Body != nil {
+		for _, cc := range s.Body.List {
+			if clause, ok := cc.(*ast.CaseClause); ok {
+				w.walkStmtList(clause.Body, depth+1)
+			}
+		}
+	}
+}
+
+func (w *cognitiveWalker) walkTypeSwitchStmt(s *ast.TypeSwitchStmt, depth int) {
+	w.score += 1 + depth
+	if s.Body != nil {
+		for _, cc := range s.Body.List {
+			if clause, ok := cc.(*ast.CaseClause); ok {
+				w.walkStmtList(clause.Body, depth+1)
+			}
+		}
+	}
+}
+
+func (w *cognitiveWalker) walkSelectStmt(s *ast.SelectStmt, depth int) {
+	w.score += 1 + depth
+	if s.Body != nil {
+		for _, cc := range s.Body.List {
+			if clause, ok := cc.(*ast.CommClause); ok {
+				w.walkStmtList(clause.Body, depth+1)
+			}
+		}
+	}
+}
+
+// walkBranchStmt handles goto and labeled break/continue — each adds +1.
+func (w *cognitiveWalker) walkBranchStmt(s *ast.BranchStmt) {
+	if s.Label != nil && (s.Tok == token.BREAK || s.Tok == token.CONTINUE) {
+		w.score++
+	}
+	if s.Tok == token.GOTO {
+		w.score++
+	}
+}
+
+func (w *cognitiveWalker) walkAssignStmt(s *ast.AssignStmt, depth int) {
+	for _, rhs := range s.Rhs {
+		w.walkExprForFuncLit(rhs, depth)
+	}
+}
+
+func (w *cognitiveWalker) walkReturnStmt(s *ast.ReturnStmt, depth int) {
+	for _, result := range s.Results {
+		w.walkExprForFuncLit(result, depth)
+	}
+}
+
+func (w *cognitiveWalker) walkDeferStmt(s *ast.DeferStmt, depth int) {
+	if s.Call != nil {
+		w.walkExprForFuncLit(s.Call.Fun, depth)
+	}
+}
+
+func (w *cognitiveWalker) walkGoStmt(s *ast.GoStmt, depth int) {
+	if s.Call != nil {
+		w.walkExprForFuncLit(s.Call.Fun, depth)
 	}
 }
 
@@ -318,8 +362,27 @@ type funcMetric struct {
 func (a *complexityAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) (*analyzer.Result, error) {
 	start := time.Now()
 
-	var metrics []funcMetric
+	metrics := gatherFuncMetrics(project)
+	findings := metricsToFindings(metrics, cfg)
+	overThreshold := countOverThreshold(metrics, cfg)
+	stats := computeComplexityStats(metrics, overThreshold)
 
+	elapsed := time.Since(start)
+	result := &analyzer.Result{
+		Analyzer:   a.Name(),
+		Duration:   elapsed,
+		DurationMs: elapsed.Milliseconds(),
+		Findings:   findings,
+		Stats:      stats,
+	}
+
+	return result, nil
+}
+
+// gatherFuncMetrics collects cyclomatic and cognitive metrics for every function
+// across all packages in the project.
+func gatherFuncMetrics(project *analyzer.Project) []funcMetric {
+	var metrics []funcMetric
 	for _, pkg := range project.Packages {
 		for i, file := range pkg.Files {
 			filePath := ""
@@ -337,7 +400,6 @@ func (a *complexityAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Co
 				cyclo := computeCyclomatic(fn)
 				cogn := computeCognitive(fn)
 
-				// Compute line count from the file set
 				startPos := project.Fset.Position(fn.Pos())
 				endPos := project.Fset.Position(fn.End())
 				lines := endPos.Line - startPos.Line + 1
@@ -356,69 +418,89 @@ func (a *complexityAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Co
 			}
 		}
 	}
+	return metrics
+}
 
+// metricsToFindings converts funcMetric entries to analyzer findings for
+// functions that exceed the configured cyclomatic or cognitive thresholds.
+func metricsToFindings(metrics []funcMetric, cfg *analyzer.Config) []*analyzer.Finding {
 	var findings []*analyzer.Finding
-	overThreshold := 0
-
 	for _, m := range metrics {
-		exceeded := false
+		findings = append(findings, cyclomaticFinding(m, cfg)...)
+		findings = append(findings, cognitiveFinding(m, cfg)...)
+	}
+	return findings
+}
 
-		if m.cyclomatic > cfg.CyclomaticThreshold {
-			exceeded = true
-			sev, ok := analyzer.ResolveSeverity("high-cyclomatic-complexity", analyzer.SeverityWarning, cfg)
-			if ok {
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "high-cyclomatic-complexity",
-					Category: analyzer.CategoryComplexity,
-					Severity: sev,
-					Message: fmt.Sprintf("function %s has cyclomatic complexity of %d (threshold: %d)",
-						m.name, m.cyclomatic, cfg.CyclomaticThreshold),
-					Location: analyzer.Location{
-						File:    m.file,
-						Line:    m.startLine,
-						EndLine: m.endLine,
-					},
-					Meta: map[string]any{
-						"function":   m.name,
-						"cyclomatic": m.cyclomatic,
-						"cognitive":  m.cognitive,
-						"lines":      m.lines,
-					},
-				})
-			}
-		}
+func cyclomaticFinding(m funcMetric, cfg *analyzer.Config) []*analyzer.Finding {
+	if m.cyclomatic <= cfg.CyclomaticThreshold {
+		return nil
+	}
+	sev, ok := analyzer.ResolveSeverity("high-cyclomatic-complexity", analyzer.SeverityWarning, cfg)
+	if !ok {
+		return nil
+	}
+	return []*analyzer.Finding{{
+		Rule:     "high-cyclomatic-complexity",
+		Category: analyzer.CategoryComplexity,
+		Severity: sev,
+		Message: fmt.Sprintf("function %s has cyclomatic complexity of %d (threshold: %d)",
+			m.name, m.cyclomatic, cfg.CyclomaticThreshold),
+		Location: analyzer.Location{
+			File:    m.file,
+			Line:    m.startLine,
+			EndLine: m.endLine,
+		},
+		Meta: map[string]any{
+			"function":   m.name,
+			"cyclomatic": m.cyclomatic,
+			"cognitive":  m.cognitive,
+			"lines":      m.lines,
+		},
+	}}
+}
 
-		if m.cognitive > cfg.CognitiveThreshold {
-			exceeded = true
-			sev, ok := analyzer.ResolveSeverity("high-cognitive-complexity", analyzer.SeverityWarning, cfg)
-			if ok {
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "high-cognitive-complexity",
-					Category: analyzer.CategoryComplexity,
-					Severity: sev,
-					Message: fmt.Sprintf("function %s has cognitive complexity of %d (threshold: %d)",
-						m.name, m.cognitive, cfg.CognitiveThreshold),
-					Location: analyzer.Location{
-						File:    m.file,
-						Line:    m.startLine,
-						EndLine: m.endLine,
-					},
-					Meta: map[string]any{
-						"function":   m.name,
-						"cyclomatic": m.cyclomatic,
-						"cognitive":  m.cognitive,
-						"lines":      m.lines,
-					},
-				})
-			}
-		}
+func cognitiveFinding(m funcMetric, cfg *analyzer.Config) []*analyzer.Finding {
+	if m.cognitive <= cfg.CognitiveThreshold {
+		return nil
+	}
+	sev, ok := analyzer.ResolveSeverity("high-cognitive-complexity", analyzer.SeverityWarning, cfg)
+	if !ok {
+		return nil
+	}
+	return []*analyzer.Finding{{
+		Rule:     "high-cognitive-complexity",
+		Category: analyzer.CategoryComplexity,
+		Severity: sev,
+		Message: fmt.Sprintf("function %s has cognitive complexity of %d (threshold: %d)",
+			m.name, m.cognitive, cfg.CognitiveThreshold),
+		Location: analyzer.Location{
+			File:    m.file,
+			Line:    m.startLine,
+			EndLine: m.endLine,
+		},
+		Meta: map[string]any{
+			"function":   m.name,
+			"cyclomatic": m.cyclomatic,
+			"cognitive":  m.cognitive,
+			"lines":      m.lines,
+		},
+	}}
+}
 
-		if exceeded {
-			overThreshold++
+// countOverThreshold returns the number of functions that exceed either threshold.
+func countOverThreshold(metrics []funcMetric, cfg *analyzer.Config) int {
+	count := 0
+	for _, m := range metrics {
+		if m.cyclomatic > cfg.CyclomaticThreshold || m.cognitive > cfg.CognitiveThreshold {
+			count++
 		}
 	}
+	return count
+}
 
-	// Compute averages
+// computeComplexityStats builds the stats map returned in the analyzer result.
+func computeComplexityStats(metrics []funcMetric, overThreshold int) map[string]any {
 	totalFuncs := len(metrics)
 	avgCyclo := 0.0
 	avgCogn := 0.0
@@ -433,7 +515,19 @@ func (a *complexityAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Co
 		avgCogn = float64(sumCogn) / float64(totalFuncs)
 	}
 
-	// Top 10 hotspots sorted by cyclomatic desc, then cognitive desc
+	hotspots := buildHotspots(metrics)
+
+	return map[string]any{
+		"total_functions":     totalFuncs,
+		"over_threshold":      overThreshold,
+		"avg_cyclomatic":      avgCyclo,
+		"avg_cognitive":       avgCogn,
+		"complexity_hotspots": hotspots,
+	}
+}
+
+// buildHotspots returns the top 10 functions sorted by cyclomatic complexity descending.
+func buildHotspots(metrics []funcMetric) []map[string]any {
 	sorted := make([]funcMetric, len(metrics))
 	copy(sorted, metrics)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -456,21 +550,5 @@ func (a *complexityAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Co
 			"cognitive":  m.cognitive,
 		})
 	}
-
-	elapsed := time.Since(start)
-	result := &analyzer.Result{
-		Analyzer:   a.Name(),
-		Duration:   elapsed,
-		DurationMs: elapsed.Milliseconds(),
-		Findings:   findings,
-		Stats: map[string]any{
-			"total_functions":     totalFuncs,
-			"over_threshold":      overThreshold,
-			"avg_cyclomatic":      avgCyclo,
-			"avg_cognitive":       avgCogn,
-			"complexity_hotspots": hotspots,
-		},
-	}
-
-	return result, nil
+	return hotspots
 }

@@ -171,103 +171,141 @@ func collectDeclarations(
 	for _, d := range file.Decls {
 		switch fd := d.(type) {
 		case *ast.FuncDecl:
-			name := fd.Name.Name
-			if !parser.IsExported(name) {
-				continue
-			}
-			// Entry points are never "dead".
-			if name == "main" || name == "init" {
-				continue
-			}
-			// Test/benchmark/example helpers in test files are entry points too.
-			if isTestFile && (strings.HasPrefix(name, "Test") ||
-				strings.HasPrefix(name, "Benchmark") ||
-				strings.HasPrefix(name, "Example")) {
-				continue
-			}
-			if analyzer.MatchesIgnoreExport(name, cfg.IgnoreExports) {
-				continue
-			}
-
-			kind := "func"
-			recv := ""
-			if fd.Recv != nil && len(fd.Recv.List) > 0 {
-				kind = "method"
-				recv = receiverTypeName(fd.Recv.List[0].Type)
-				// Methods that satisfy well-known interfaces are never dead code.
-				if commonInterfaceMethods[name] {
-					continue
-				}
-			}
-
-			startLine := project.Fset.Position(fd.Pos()).Line
-			endLine := project.Fset.Position(fd.End()).Line
-
-			key := pkgImportPath + "." + name
-			if kind == "method" {
-				key = pkgImportPath + "." + recv + "." + name
-			}
-
-			decls[key] = &declaration{
-				Name:    name,
-				Kind:    kind,
-				File:    filePath,
-				Line:    startLine,
-				EndLine: endLine,
-				PkgPath: pkgImportPath,
-				Recv:    recv,
-			}
-
+			collectFuncDecl(fd, filePath, pkgImportPath, project, cfg, decls, isTestFile)
 		case *ast.GenDecl:
-			for _, spec := range fd.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					if !parser.IsExported(s.Name.Name) {
-						continue
-					}
-					if analyzer.MatchesIgnoreExport(s.Name.Name, cfg.IgnoreExports) {
-						continue
-					}
-					startLine := project.Fset.Position(s.Pos()).Line
-					endLine := project.Fset.Position(s.End()).Line
-					key := pkgImportPath + "." + s.Name.Name
-					decls[key] = &declaration{
-						Name:    s.Name.Name,
-						Kind:    "type",
-						File:    filePath,
-						Line:    startLine,
-						EndLine: endLine,
-						PkgPath: pkgImportPath,
-					}
+			collectGenDecl(fd, filePath, pkgImportPath, project, cfg, decls)
+		}
+	}
+}
 
-				case *ast.ValueSpec:
-					for _, vname := range s.Names {
-						if !parser.IsExported(vname.Name) {
-							continue
-						}
-						if analyzer.MatchesIgnoreExport(vname.Name, cfg.IgnoreExports) {
-							continue
-						}
-						startLine := project.Fset.Position(vname.Pos()).Line
-						endLine := project.Fset.Position(vname.End()).Line
+// collectFuncDecl records an exported function or method declaration.
+func collectFuncDecl(
+	fd *ast.FuncDecl,
+	filePath string,
+	pkgImportPath string,
+	project *analyzer.Project,
+	cfg *analyzer.Config,
+	decls map[string]*declaration,
+	isTestFile bool,
+) {
+	name := fd.Name.Name
+	if !parser.IsExported(name) {
+		return
+	}
+	if name == "main" || name == "init" {
+		return
+	}
+	if isTestFile && (strings.HasPrefix(name, "Test") ||
+		strings.HasPrefix(name, "Benchmark") ||
+		strings.HasPrefix(name, "Example")) {
+		return
+	}
+	if analyzer.MatchesIgnoreExport(name, cfg.IgnoreExports) {
+		return
+	}
 
-						kind := "var"
-						if fd.Tok.String() == "const" {
-							kind = "const"
-						}
+	kind := "func"
+	recv := ""
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		kind = "method"
+		recv = receiverTypeName(fd.Recv.List[0].Type)
+		// Methods that satisfy well-known interfaces are never dead code.
+		if commonInterfaceMethods[name] {
+			return
+		}
+	}
 
-						key := pkgImportPath + "." + vname.Name
-						decls[key] = &declaration{
-							Name:    vname.Name,
-							Kind:    kind,
-							File:    filePath,
-							Line:    startLine,
-							EndLine: endLine,
-							PkgPath: pkgImportPath,
-						}
-					}
-				}
-			}
+	startLine := project.Fset.Position(fd.Pos()).Line
+	endLine := project.Fset.Position(fd.End()).Line
+
+	key := pkgImportPath + "." + name
+	if kind == "method" {
+		key = pkgImportPath + "." + recv + "." + name
+	}
+
+	decls[key] = &declaration{
+		Name:    name,
+		Kind:    kind,
+		File:    filePath,
+		Line:    startLine,
+		EndLine: endLine,
+		PkgPath: pkgImportPath,
+		Recv:    recv,
+	}
+}
+
+// collectGenDecl records exported type, var, and const declarations.
+func collectGenDecl(
+	fd *ast.GenDecl,
+	filePath string,
+	pkgImportPath string,
+	project *analyzer.Project,
+	cfg *analyzer.Config,
+	decls map[string]*declaration,
+) {
+	for _, spec := range fd.Specs {
+		switch s := spec.(type) {
+		case *ast.TypeSpec:
+			collectTypeSpec(s, filePath, pkgImportPath, project, cfg, decls)
+		case *ast.ValueSpec:
+			collectValueSpec(s, fd, filePath, pkgImportPath, project, cfg, decls)
+		}
+	}
+}
+
+// collectTypeSpec records an exported type declaration.
+func collectTypeSpec(
+	s *ast.TypeSpec,
+	filePath string,
+	pkgImportPath string,
+	project *analyzer.Project,
+	cfg *analyzer.Config,
+	decls map[string]*declaration,
+) {
+	if !parser.IsExported(s.Name.Name) || analyzer.MatchesIgnoreExport(s.Name.Name, cfg.IgnoreExports) {
+		return
+	}
+	startLine := project.Fset.Position(s.Pos()).Line
+	endLine := project.Fset.Position(s.End()).Line
+	key := pkgImportPath + "." + s.Name.Name
+	decls[key] = &declaration{
+		Name:    s.Name.Name,
+		Kind:    "type",
+		File:    filePath,
+		Line:    startLine,
+		EndLine: endLine,
+		PkgPath: pkgImportPath,
+	}
+}
+
+// collectValueSpec records exported var and const declarations.
+func collectValueSpec(
+	s *ast.ValueSpec,
+	fd *ast.GenDecl,
+	filePath string,
+	pkgImportPath string,
+	project *analyzer.Project,
+	cfg *analyzer.Config,
+	decls map[string]*declaration,
+) {
+	kind := "var"
+	if fd.Tok.String() == "const" {
+		kind = "const"
+	}
+	for _, vname := range s.Names {
+		if !parser.IsExported(vname.Name) || analyzer.MatchesIgnoreExport(vname.Name, cfg.IgnoreExports) {
+			continue
+		}
+		startLine := project.Fset.Position(vname.Pos()).Line
+		endLine := project.Fset.Position(vname.End()).Line
+		key := pkgImportPath + "." + vname.Name
+		decls[key] = &declaration{
+			Name:    vname.Name,
+			Kind:    kind,
+			File:    filePath,
+			Line:    startLine,
+			EndLine: endLine,
+			PkgPath: pkgImportPath,
 		}
 	}
 }

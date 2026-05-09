@@ -1,3 +1,4 @@
+// Package analyzer defines the core types and interfaces for krait's static analysis framework.
 package analyzer
 
 import (

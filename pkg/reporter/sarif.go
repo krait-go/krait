@@ -13,9 +13,9 @@ const (
 )
 
 type sarifLog struct {
-	Schema  string      `json:"$schema"`
-	Version string      `json:"version"`
-	Runs    []sarifRun  `json:"runs"`
+	Schema  string     `json:"$schema"`
+	Version string     `json:"version"`
+	Runs    []sarifRun `json:"runs"`
 }
 
 type sarifRun struct {
@@ -34,16 +34,16 @@ type sarifDriver struct {
 }
 
 type sarifRule struct {
-	ID               string              `json:"id"`
-	ShortDescription sarifMessage        `json:"shortDescription"`
+	ID               string       `json:"id"`
+	ShortDescription sarifMessage `json:"shortDescription"`
 }
 
 type sarifResult struct {
-	RuleID           string           `json:"ruleId"`
-	Level            string           `json:"level"`
-	Message          sarifMessage     `json:"message"`
-	Locations        []sarifLocation  `json:"locations"`
-	RelatedLocations []sarifLocation  `json:"relatedLocations,omitempty"`
+	RuleID           string          `json:"ruleId"`
+	Level            string          `json:"level"`
+	Message          sarifMessage    `json:"message"`
+	Locations        []sarifLocation `json:"locations"`
+	RelatedLocations []sarifLocation `json:"relatedLocations,omitempty"`
 }
 
 type sarifMessage struct {

@@ -37,122 +37,16 @@ func isStdlib(importPath string) bool {
 func (a *depsAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) (*analyzer.Result, error) {
 	start := time.Now()
 
-	// Collect all import paths with the first file they appear in.
-	// importFirstFile maps import path -> first absolute file path that imports it.
-	importFirstFile := make(map[string]string)
+	importFirstFile := collectAllImports(project)
+	directDeps := filterDirectDeps(project.GoModDeps)
 
-	for _, pkg := range project.Packages {
-		for i, file := range pkg.Files {
-			filePath := ""
-			if i < len(pkg.FilePaths) {
-				filePath = pkg.FilePaths[i]
-			}
+	unusedFindings, unusedCount := findUnusedDeps(directDeps, importFirstFile, cfg)
+	unlistedFindings, unlistedCount, externalImports := findUnlistedDeps(project, importFirstFile, cfg)
 
-			for _, imp := range file.Imports {
-				// Strip surrounding quotes from the import path literal.
-				path := strings.Trim(imp.Path.Value, `"`)
-				if path == "" {
-					continue
-				}
-				if _, seen := importFirstFile[path]; !seen {
-					importFirstFile[path] = filePath
-				}
-			}
-		}
-	}
-
-	// Separate direct deps from indirect.
-	var directDeps []analyzer.GoModDep
-	allDeps := project.GoModDeps
-	for _, dep := range allDeps {
-		if !dep.Indirect {
-			directDeps = append(directDeps, dep)
-		}
-	}
-
-	var findings []*analyzer.Finding
-
-	// Check unused direct dependencies.
-	// A direct dep is unused if no import path uses it as a prefix.
-	unusedCount := 0
-	for _, dep := range directDeps {
-		used := false
-		for imp := range importFirstFile {
-			if imp == dep.Path || strings.HasPrefix(imp, dep.Path+"/") {
-				used = true
-				break
-			}
-		}
-		if !used {
-			unusedCount++
-			sev, ok := analyzer.ResolveSeverity("unused-dependency", analyzer.SeverityWarning, cfg)
-			if ok {
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "unused-dependency",
-					Category: analyzer.CategoryDependency,
-					Severity: sev,
-					Message:  fmt.Sprintf("dependency %s is listed in go.mod but not imported", dep.Path),
-					Location: analyzer.Location{
-						File: "go.mod",
-						Line: dep.Line,
-					},
-					Meta: map[string]any{
-						"dependency": dep.Path,
-						"version":    dep.Version,
-					},
-				})
-			}
-		}
-	}
-
-	// Check unlisted imports.
-	// An import is unlisted if it is not stdlib, not internal (module prefix),
-	// and no go.mod dep (direct or indirect) covers it as a prefix.
-	unlistedCount := 0
-	externalImports := make(map[string]struct{})
-
-	for imp, filePath := range importFirstFile {
-		if isStdlib(imp) {
-			continue
-		}
-		if strings.HasPrefix(imp, project.ModulePath) {
-			continue
-		}
-
-		// It's an external import — count it.
-		externalImports[imp] = struct{}{}
-
-		covered := false
-		for _, dep := range allDeps {
-			if imp == dep.Path || strings.HasPrefix(imp, dep.Path+"/") {
-				covered = true
-				break
-			}
-		}
-
-		if !covered {
-			unlistedCount++
-			relFile := parser.RelPath(project.RootDir, filePath)
-			sev, ok := analyzer.ResolveSeverity("unlisted-dependency", analyzer.SeverityError, cfg)
-			if ok {
-				findings = append(findings, &analyzer.Finding{
-					Rule:     "unlisted-dependency",
-					Category: analyzer.CategoryDependency,
-					Severity: sev,
-					Message:  fmt.Sprintf("import %q is not listed in go.mod", imp),
-					Location: analyzer.Location{
-						File: relFile,
-					},
-					Meta: map[string]any{
-						"import": imp,
-					},
-				})
-			}
-		}
-	}
+	findings := append(unusedFindings, unlistedFindings...)
 
 	elapsed := time.Since(start)
-	result := &analyzer.Result{
+	return &analyzer.Result{
 		Analyzer:   a.Name(),
 		Duration:   elapsed,
 		DurationMs: elapsed.Milliseconds(),
@@ -163,7 +57,139 @@ func (a *depsAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) 
 			"unlisted_imports":    unlistedCount,
 			"total_imports":       len(externalImports),
 		},
-	}
+	}, nil
+}
 
-	return result, nil
+// collectAllImports returns a map from import path to the first absolute file
+// path that contains that import, across all packages in the project.
+func collectAllImports(project *analyzer.Project) map[string]string {
+	importFirstFile := make(map[string]string)
+	for _, pkg := range project.Packages {
+		for i, file := range pkg.Files {
+			filePath := ""
+			if i < len(pkg.FilePaths) {
+				filePath = pkg.FilePaths[i]
+			}
+			for _, imp := range file.Imports {
+				path := strings.Trim(imp.Path.Value, `"`)
+				if path == "" {
+					continue
+				}
+				if _, seen := importFirstFile[path]; !seen {
+					importFirstFile[path] = filePath
+				}
+			}
+		}
+	}
+	return importFirstFile
+}
+
+// filterDirectDeps returns only the non-indirect entries from allDeps.
+func filterDirectDeps(allDeps []analyzer.GoModDep) []analyzer.GoModDep {
+	var direct []analyzer.GoModDep
+	for _, dep := range allDeps {
+		if !dep.Indirect {
+			direct = append(direct, dep)
+		}
+	}
+	return direct
+}
+
+// findUnusedDeps checks each direct dependency against the imported paths and
+// returns findings for any that are not used, plus the unused count.
+func findUnusedDeps(
+	directDeps []analyzer.GoModDep,
+	importFirstFile map[string]string,
+	cfg *analyzer.Config,
+) ([]*analyzer.Finding, int) {
+	var findings []*analyzer.Finding
+	unusedCount := 0
+	for _, dep := range directDeps {
+		if isDepUsed(dep.Path, importFirstFile) {
+			continue
+		}
+		unusedCount++
+		sev, ok := analyzer.ResolveSeverity("unused-dependency", analyzer.SeverityWarning, cfg)
+		if !ok {
+			continue
+		}
+		findings = append(findings, &analyzer.Finding{
+			Rule:     "unused-dependency",
+			Category: analyzer.CategoryDependency,
+			Severity: sev,
+			Message:  fmt.Sprintf("dependency %s is listed in go.mod but not imported", dep.Path),
+			Location: analyzer.Location{
+				File: "go.mod",
+				Line: dep.Line,
+			},
+			Meta: map[string]any{
+				"dependency": dep.Path,
+				"version":    dep.Version,
+			},
+		})
+	}
+	return findings, unusedCount
+}
+
+// isDepUsed reports whether any import path in importFirstFile is covered by depPath.
+func isDepUsed(depPath string, importFirstFile map[string]string) bool {
+	for imp := range importFirstFile {
+		if imp == depPath || strings.HasPrefix(imp, depPath+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// findUnlistedDeps checks external imports against go.mod and returns findings
+// for unlisted ones, plus the unlisted count and the full external import set.
+func findUnlistedDeps(
+	project *analyzer.Project,
+	importFirstFile map[string]string,
+	cfg *analyzer.Config,
+) ([]*analyzer.Finding, int, map[string]struct{}) {
+	allDeps := project.GoModDeps
+	externalImports := make(map[string]struct{})
+	var findings []*analyzer.Finding
+	unlistedCount := 0
+
+	for imp, filePath := range importFirstFile {
+		if isStdlib(imp) || strings.HasPrefix(imp, project.ModulePath) {
+			continue
+		}
+		externalImports[imp] = struct{}{}
+
+		if isDepCovered(imp, allDeps) {
+			continue
+		}
+		unlistedCount++
+		relFile := parser.RelPath(project.RootDir, filePath)
+		sev, ok := analyzer.ResolveSeverity("unlisted-dependency", analyzer.SeverityError, cfg)
+		if !ok {
+			continue
+		}
+		findings = append(findings, &analyzer.Finding{
+			Rule:     "unlisted-dependency",
+			Category: analyzer.CategoryDependency,
+			Severity: sev,
+			Message:  fmt.Sprintf("import %q is not listed in go.mod", imp),
+			Location: analyzer.Location{
+				File: relFile,
+			},
+			Meta: map[string]any{
+				"import": imp,
+			},
+		})
+	}
+	return findings, unlistedCount, externalImports
+}
+
+// isDepCovered reports whether any entry in allDeps covers the given import path.
+func isDepCovered(imp string, allDeps []analyzer.GoModDep) bool {
+	for _, dep := range allDeps {
+		if imp == dep.Path || strings.HasPrefix(imp, dep.Path+"/") {
+			return true
+		}
+	}
+	return false
 }
