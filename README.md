@@ -84,13 +84,6 @@ brew install krait-go/tap/krait
 
 Download the latest pre-built binary for your platform from the [GitHub releases page](https://github.com/krait-go/krait/releases).
 
-**Docker**
-
-```bash
-docker pull ghcr.io/krait-go/krait:latest
-docker run --rm -v $(pwd):/src ghcr.io/krait-go/krait:latest check /src
-```
-
 ---
 
 ## Commands
