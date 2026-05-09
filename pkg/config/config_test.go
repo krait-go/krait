@@ -34,7 +34,7 @@ func TestLoad_NoConfigFile_ReturnsDefaults(t *testing.T) {
 func TestLoad_ValidConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"cyclomatic_threshold": 20, "cognitive_threshold": 25}`
-	if err := os.WriteFile(filepath.Join(dir, ".krait.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".krait.json"), []byte(content), 0o644); err != nil {
 		t.Fatalf("writing config file: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestLoad_JSNCCommentStripping(t *testing.T) {
   "cyclomatic_threshold": 10, // inline comment
   "cognitive_threshold": 12
 }`
-	if err := os.WriteFile(filepath.Join(dir, ".krait.jsonc"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".krait.jsonc"), []byte(content), 0o644); err != nil {
 		t.Fatalf("writing config file: %v", err)
 	}
 

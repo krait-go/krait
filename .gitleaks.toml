@@ -1,0 +1,8 @@
+title = "krait gitleaks config"
+
+[allowlist]
+  description = "Allowlist for krait"
+  paths = [
+    '''testdata/''',
+    '''go\.sum''',
+  ]

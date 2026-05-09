@@ -9,6 +9,16 @@ tasks:
     cmds:
       - task --list
 
+  setup:
+    desc: Install development tools and git hooks
+    cmds:
+      - go install mvdan.cc/gofumpt@latest
+      - go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+      - go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest
+      - go install github.com/evilmartians/lefthook/v2@latest
+      - lefthook install
+      - echo "Setup complete. Git hooks installed."
+
   build:
     desc: Build the binary
     cmds:
@@ -25,9 +35,9 @@ tasks:
       - golangci-lint run ./...
 
   fmt:
-    desc: Format code
+    desc: Format code with gofumpt
     cmds:
-      - goimports -w -local github.com/krait-go/krait .
+      - gofumpt -l -w .
 
   tidy:
     desc: Tidy go modules
@@ -38,6 +48,15 @@ tasks:
     desc: Run go vet
     cmds:
       - go vet ./...
+
+  hooks:
+    desc: Run all pre-commit checks manually
+    cmds:
+      - gofumpt -l -d .
+      - golangci-lint run ./...
+      - go mod tidy
+      - go vet ./...
+      - go build ./...
 
   check:
     desc: Run all checks (lint + test + vet)

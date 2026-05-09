@@ -8,6 +8,7 @@ Thank you for your interest in contributing. This document explains how to get s
 
 - **Go 1.23 or later** — the module is declared at `go 1.23.0`
 - **Task** (optional but recommended) — `brew install go-task` or see [taskfile.dev](https://taskfile.dev)
+- **lefthook** — installed automatically by `task setup`
 
 If you do not have Task installed, all commands have plain `go` equivalents listed below.
 
@@ -19,17 +20,20 @@ If you do not have Task installed, all commands have plain `go` equivalents list
 git clone https://github.com/krait-go/krait.git
 cd krait
 
-# Verify everything builds and tests pass
-go build ./...
-go test ./...
-go vet ./...
-```
+# Install tools and git hooks
+task setup
 
-Or, with Task:
-
-```bash
+# Verify everything works
 task check
 ```
+
+The `task setup` command installs:
+- **gofumpt** — strict Go formatter (superset of gofmt)
+- **gocyclo** — cyclomatic complexity checker
+- **gitleaks** — secret scanner
+- **lefthook** — Git hooks manager
+
+It also installs Git hooks that run automatically on every commit.
 
 Dog-food the tool on itself:
 
@@ -53,6 +57,32 @@ For a fast feedback loop while working on a single package:
 
 ```bash
 go test ./pkg/complexity/... -v -run TestComplexity
+```
+
+---
+
+## Git Hooks
+
+This project uses [lefthook](https://github.com/evilmartians/lefthook) for Git hooks. They are installed automatically by `task setup`.
+
+**Pre-commit hooks** (run on every `git commit`):
+- **gofumpt** — formats changed Go files (auto-fixes and re-stages)
+- **golangci-lint** — lints changed code (auto-fixes where possible)
+- **go mod tidy** — ensures go.mod/go.sum are up to date
+- **go build** — verifies the project compiles
+- **go vet** — catches common mistakes
+- **gitleaks** — prevents committing secrets/keys
+
+**Commit message hook:**
+- Enforces [Conventional Commits](https://www.conventionalcommits.org/) format
+- Format: `<type>(<scope>): <description>`
+- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
+
+If hooks are too slow for a specific commit, you can skip them with `git commit --no-verify`, but CI will still enforce the same checks.
+
+To run hooks manually without committing:
+```bash
+task hooks
 ```
 
 ---
@@ -136,16 +166,22 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 feat: add my-analyzer for detecting X
+feat(complexity): add cognitive complexity threshold config
 fix: handle nil pointer in duplication scanner
 docs: update CONTRIBUTING with task commands
+style: apply gofumpt formatting
 refactor: simplify complexity threshold logic
+perf: cache AST parse results across analyzers
 test: add edge case for empty file in dead code analyzer
+build: add gofumpt to setup task
+ci: enable staticcheck in golangci-lint
 chore: bump Go version to 1.24
+revert: revert "feat: add experimental analyzer"
 ```
 
-The type must be one of: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+The type must be one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 
-Include a body when the change is non-obvious — explain **why**, not what.
+The commit-msg hook enforces this format automatically. Include a body when the change is non-obvious — explain **why**, not what.
 
 ---
 
@@ -163,7 +199,7 @@ Include a body when the change is non-obvious — explain **why**, not what.
 ## Code Style
 
 - Follow the patterns already established in the package you are modifying
-- Use `goimports` with the local module prefix: `goimports -local github.com/krait-go/krait`
+- Use `gofumpt` for formatting: `gofumpt -l -w .` (or `task fmt`)
 - Wrap errors with context: `fmt.Errorf("analyzing file %s: %w", path, err)`
 - Do not add comments that restate the code — comments should explain *why*, not *what*
 - Keep `cmd/krait/main.go` thin — if you find yourself adding logic there, it belongs in a package

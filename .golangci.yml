@@ -3,20 +3,48 @@ run:
 
 linters:
   enable:
+    # Correctness
     - errcheck
     - errorlint
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+
+    # Security
     - gosec
+
+    # Style and consistency
     - revive
     - gocritic
-    - goimports
+    - gofumpt
+    - misspell
     - unconvert
     - unparam
     - whitespace
-    - misspell
+
+    # Bugs
+    - bodyclose
+    - nilerr
+    - noctx
+    - durationcheck
+    - makezero
+    - exportloopref
+
+    # Complexity
+    - gocyclo
+    - gocognit
+    - nestif
+    - funlen
+
+    # Modern Go
+    - intrange
 
 linters-settings:
   goimports:
     local-prefixes: github.com/krait-go/krait
+  gofumpt:
+    extra-rules: true
   revive:
     rules:
       - name: exported
@@ -25,12 +53,24 @@ linters-settings:
   gosec:
     excludes:
       - G304
+  gocyclo:
+    min-complexity: 15
+  gocognit:
+    min-complexity: 20
+  funlen:
+    lines: 100
+    statements: 60
+  nestif:
+    min-complexity: 5
 
 issues:
   exclude-rules:
     - path: "_test\\.go"
       linters:
         - errcheck
+        - funlen
+        - gocyclo
+        - gocognit
 
   max-issues-per-linter: 0
   max-same-issues: 0

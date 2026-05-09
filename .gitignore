@@ -14,6 +14,9 @@ coverage.html
 # Task runner
 .task/
 
+# Lefthook local overrides (developer-specific hook config)
+lefthook-local.yml
+
 # IDE
 .idea/
 .vscode/

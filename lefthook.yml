@@ -1,0 +1,45 @@
+# lefthook.yml — Git hooks for krait development
+# Install: lefthook install
+# Docs: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.go"
+      run: gofumpt -l -w {staged_files}
+      stage_fixed: true
+
+    lint:
+      glob: "*.go"
+      run: golangci-lint run --fix
+      stage_fixed: true
+
+    mod-tidy:
+      glob: "*.{go,mod,sum}"
+      run: go mod tidy && git diff --exit-code go.mod go.sum
+      stage_fixed: true
+
+    build:
+      glob: "*.go"
+      run: go build ./...
+
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+
+    secrets:
+      run: gitleaks protect --staged --redact
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        msg=$(head -1 {1})
+        if ! echo "$msg" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+          echo "ERROR: Commit message must follow Conventional Commits format"
+          echo "  Expected: <type>(<scope>): <description>"
+          echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo "  Got: $msg"
+          exit 1
+        fi
