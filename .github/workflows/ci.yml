@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+        continue-on-error: true
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - run: go vet ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test, vet]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - run: go build -o dist/krait ./cmd/krait/
+      - name: Dogfood
+        run: ./dist/krait check -f json --threshold 100

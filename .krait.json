@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/krait-go/krait/main/schema.json",
+  "ignore_patterns": [
+    "vendor/**",
+    "**/testdata/**",
+    "**/.git/**"
+  ],
+  "rules": {
+    "unused-export-func": "warn",
+    "unused-export-type": "warn",
+    "unused-export-var": "warn",
+    "unused-export-const": "warn",
+    "high-cyclomatic-complexity": "warn",
+    "high-cognitive-complexity": "warn",
+    "code-duplication": "warn",
+    "layer-violation": "error",
+    "god-package": "warn",
+    "unused-dependency": "warn",
+    "unlisted-dependency": "error"
+  },
+  "cyclomatic_threshold": 15,
+  "cognitive_threshold": 20
+}

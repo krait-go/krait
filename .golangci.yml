@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - errorlint
+    - gosec
+    - revive
+    - gocritic
+    - goimports
+    - unconvert
+    - unparam
+    - whitespace
+    - misspell
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/krait-go/krait
+  revive:
+    rules:
+      - name: exported
+      - name: var-naming
+      - name: error-strings
+  gosec:
+    excludes:
+      - G304
+
+issues:
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - linters: [errcheck]
+        path: "_test\\.go"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

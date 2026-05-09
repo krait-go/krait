@@ -1,0 +1,29 @@
+name: "Krait Check"
+description: "Run krait unified codebase health analyzer on your Go project"
+branding:
+  icon: "search"
+  color: "green"
+
+inputs:
+  version:
+    description: "Version of krait to install"
+    required: false
+    default: "latest"
+  args:
+    description: "Arguments to pass to krait"
+    required: false
+    default: "check --ci"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install krait
+      shell: bash
+      env:
+        KRAIT_VERSION: ${{ inputs.version }}
+      run: go install github.com/krait-go/krait/cmd/krait@"${KRAIT_VERSION}"
+    - name: Run krait
+      shell: bash
+      env:
+        KRAIT_ARGS: ${{ inputs.args }}
+      run: krait ${KRAIT_ARGS}

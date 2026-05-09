@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/krait-go/krait/main/schema.json",
+  "title": "Krait Configuration",
+  "description": "Schema for .krait.json configuration files",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference URI"
+    },
+    "ignore_patterns": {
+      "type": "array",
+      "description": "Glob patterns for files and directories to exclude from analysis",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "examples": [["vendor/**", "**/testdata/**"]]
+    },
+    "include_tests": {
+      "type": "boolean",
+      "description": "Whether to include _test.go files in analysis",
+      "default": false
+    },
+    "rules": {
+      "type": "object",
+      "description": "Per-rule severity overrides. Keys are rule names, values are severity levels.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["error", "warn", "warning", "off", "info"],
+        "description": "Severity level for the rule"
+      },
+      "default": {}
+    },
+    "cyclomatic_threshold": {
+      "type": "integer",
+      "description": "Cyclomatic complexity threshold above which the high-cyclomatic-complexity rule triggers",
+      "default": 15,
+      "minimum": 1
+    },
+    "cognitive_threshold": {
+      "type": "integer",
+      "description": "Cognitive complexity threshold above which the high-cognitive-complexity rule triggers",
+      "default": 20,
+      "minimum": 1
+    },
+    "min_duplicate_lines": {
+      "type": "integer",
+      "description": "Minimum number of duplicate lines required to trigger the code-duplication rule",
+      "default": 6,
+      "minimum": 2
+    },
+    "min_duplicate_tokens": {
+      "type": "integer",
+      "description": "Minimum number of duplicate tokens required to trigger the code-duplication rule",
+      "default": 50,
+      "minimum": 1
+    },
+    "architecture_layers": {
+      "type": "array",
+      "description": "Ordered list of architecture layers used to enforce import boundaries",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "packages"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable name of the layer (e.g., \"domain\", \"application\", \"infrastructure\")"
+          },
+          "packages": {
+            "type": "array",
+            "description": "Import path patterns that belong to this layer",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "can_import": {
+            "type": "array",
+            "description": "Names of other layers this layer is allowed to import from",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "default": []
+    },
+    "ignore_exports": {
+      "type": "array",
+      "description": "Exported symbol names to exclude from the unused-export rules",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "god_package_threshold": {
+      "type": "integer",
+      "description": "Number of exported symbols above which the god-package rule triggers",
+      "default": 10,
+      "minimum": 1
+    }
+  }
+}
