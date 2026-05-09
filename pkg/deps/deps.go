@@ -2,6 +2,8 @@ package deps
 
 import (
 	"fmt"
+	"go/ast"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,8 @@ type depsAnalyzer struct{}
 func New() analyzer.Analyzer {
 	return &depsAnalyzer{}
 }
+
+var _ analyzer.Analyzer = (*depsAnalyzer)(nil)
 
 func (a *depsAnalyzer) Name() string {
 	return "dependency"
@@ -67,23 +71,34 @@ func (a *depsAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Config) 
 func collectAllImports(project *analyzer.Project) map[string]string {
 	importFirstFile := make(map[string]string)
 	for _, pkg := range project.Packages {
-		for i, file := range pkg.Files {
-			filePath := ""
-			if i < len(pkg.FilePaths) {
-				filePath = pkg.FilePaths[i]
-			}
-			for _, imp := range file.Imports {
-				path := strings.Trim(imp.Path.Value, `"`)
-				if path == "" {
-					continue
-				}
-				if _, seen := importFirstFile[path]; !seen {
-					importFirstFile[path] = filePath
-				}
-			}
-		}
+		collectPackageImports(pkg, importFirstFile)
 	}
 	return importFirstFile
+}
+
+func collectPackageImports(pkg *analyzer.PackageInfo, importFirstFile map[string]string) {
+	for i, file := range pkg.Files {
+		filePath := ""
+		if i < len(pkg.FilePaths) {
+			filePath = pkg.FilePaths[i]
+		}
+		collectFileImports(file, filePath, importFirstFile)
+	}
+}
+
+func collectFileImports(file *ast.File, filePath string, importFirstFile map[string]string) {
+	for _, imp := range file.Imports {
+		if imp.Path == nil {
+			continue
+		}
+		path := strings.Trim(imp.Path.Value, `"`)
+		if path == "" {
+			continue
+		}
+		if _, seen := importFirstFile[path]; !seen {
+			importFirstFile[path] = filePath
+		}
+	}
 }
 
 // filterDirectDeps returns only the non-indirect entries from allDeps.
@@ -150,12 +165,20 @@ func findUnlistedDeps(
 	importFirstFile map[string]string,
 	cfg *analyzer.Config,
 ) ([]*analyzer.Finding, int, map[string]struct{}) {
+	// Sort import paths so findings are produced in deterministic order.
+	importPaths := make([]string, 0, len(importFirstFile))
+	for imp := range importFirstFile {
+		importPaths = append(importPaths, imp)
+	}
+	sort.Strings(importPaths)
+
 	allDeps := project.GoModDeps
 	externalImports := make(map[string]struct{})
 	var findings []*analyzer.Finding
 	unlistedCount := 0
 
-	for imp, filePath := range importFirstFile {
+	for _, imp := range importPaths {
+		filePath := importFirstFile[imp]
 		if isStdlib(imp) || strings.HasPrefix(imp, project.ModulePath) {
 			continue
 		}

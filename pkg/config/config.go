@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -78,6 +79,12 @@ func Validate(cfg *analyzer.Config) error {
 		}
 	}
 
+	for _, pattern := range cfg.IgnoreExports {
+		if _, err := filepath.Match(pattern, "test"); err != nil {
+			return fmt.Errorf("invalid ignore_export pattern %q: %w", pattern, err)
+		}
+	}
+
 	layerNames := make(map[string]bool)
 	for _, layer := range cfg.ArchitectureLayers {
 		layerNames[layer.Name] = true
@@ -95,7 +102,7 @@ func Validate(cfg *analyzer.Config) error {
 
 // stripJSONCComments removes // comments from JSONC content.
 func stripJSONCComments(data []byte) []byte {
-	lines := splitLines(data)
+	lines := bytes.Split(data, []byte("\n"))
 	var result []byte
 	for i, line := range lines {
 		stripped := stripLineComment(line)
@@ -105,29 +112,6 @@ func stripJSONCComments(data []byte) []byte {
 		}
 	}
 	return result
-}
-
-func splitLines(data []byte) [][]byte {
-	var lines [][]byte
-	for {
-		idx := indexOf(data, '\n')
-		if idx < 0 {
-			lines = append(lines, data)
-			break
-		}
-		lines = append(lines, data[:idx])
-		data = data[idx+1:]
-	}
-	return lines
-}
-
-func indexOf(data []byte, b byte) int {
-	for i, c := range data {
-		if c == b {
-			return i
-		}
-	}
-	return -1
 }
 
 func stripLineComment(line []byte) []byte {

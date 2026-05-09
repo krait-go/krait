@@ -33,7 +33,7 @@ func Parse(rootDir string, cfg *analyzer.Config) (*analyzer.Project, error) {
 	}
 
 	fset := token.NewFileSet()
-	files, err := parseFilesParallel(fset, goFiles)
+	files, warnings, err := parseFilesParallel(fset, goFiles)
 	if err != nil {
 		return nil, fmt.Errorf("parsing files: %w", err)
 	}
@@ -47,6 +47,7 @@ func Parse(rootDir string, cfg *analyzer.Config) (*analyzer.Project, error) {
 		Packages:   packages,
 		Files:      files,
 		GoModDeps:  deps,
+		Warnings:   warnings,
 	}, nil
 }
 
@@ -54,7 +55,7 @@ func Parse(rootDir string, cfg *analyzer.Config) (*analyzer.Project, error) {
 func parseGoMod(path string) (string, []analyzer.GoModDep, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 
 	var modulePath string
@@ -180,15 +181,19 @@ func shouldIncludeFile(path, rootDir string, cfg *analyzer.Config) bool {
 	return !MatchesAny(rel, cfg.IgnorePatterns)
 }
 
-// parseFilesParallel parses Go files concurrently.
-func parseFilesParallel(fset *token.FileSet, paths []string) (map[string]*ast.File, error) {
-	type result struct {
+// parseFilesParallel reads Go files concurrently then parses them sequentially.
+// token.FileSet is not safe for concurrent writes, so parsing must be sequential.
+// Returns parsed files, per-file warnings (non-fatal parse failures), and a fatal error
+// only when every file fails.
+func parseFilesParallel(fset *token.FileSet, paths []string) (map[string]*ast.File, []string, error) {
+	// Phase 1: read file contents concurrently.
+	type readResult struct {
 		path string
-		file *ast.File
+		data []byte
 		err  error
 	}
 
-	results := make(chan result, len(paths))
+	readResults := make(chan readResult, len(paths))
 	sem := make(chan struct{}, runtime.NumCPU())
 	var wg sync.WaitGroup
 
@@ -198,39 +203,46 @@ func parseFilesParallel(fset *token.FileSet, paths []string) (map[string]*ast.Fi
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-
-			f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
-			results <- result{path: path, file: f, err: err}
+			data, err := os.ReadFile(path)
+			readResults <- readResult{path: path, data: data, err: err}
 		}(p)
 	}
 
 	go func() {
 		wg.Wait()
-		close(results)
+		close(readResults)
 	}()
 
-	files := make(map[string]*ast.File)
-	var parseErrors []string
-	for r := range results {
+	type fileData struct {
+		path string
+		data []byte
+	}
+	var toparse []fileData
+	var warnings []string
+	for r := range readResults {
 		if r.err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", r.path, r.err))
+			warnings = append(warnings, fmt.Sprintf("%s: %v", r.path, r.err))
 			continue
 		}
-		files[r.path] = r.file
+		toparse = append(toparse, fileData{path: r.path, data: r.data})
 	}
 
-	if len(parseErrors) > 0 && len(files) == 0 {
-		return nil, fmt.Errorf("all files failed to parse:\n%s", strings.Join(parseErrors, "\n"))
-	}
-
-	if len(parseErrors) > 0 {
-		fmt.Fprintf(os.Stderr, "warning: %d file(s) failed to parse:\n", len(parseErrors))
-		for _, e := range parseErrors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
+	// Phase 2: parse sequentially — fset.AddFile is not goroutine-safe.
+	files := make(map[string]*ast.File)
+	for _, fd := range toparse {
+		f, err := goparser.ParseFile(fset, fd.path, fd.data, goparser.ParseComments)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", fd.path, err))
+			continue
 		}
+		files[fd.path] = f
 	}
 
-	return files, nil
+	if len(files) == 0 && len(warnings) > 0 {
+		return nil, nil, fmt.Errorf("all files failed to parse:\n%s", strings.Join(warnings, "\n"))
+	}
+
+	return files, warnings, nil
 }
 
 // groupIntoPackages groups parsed files by their directory.
@@ -330,8 +342,5 @@ func matchDoubleStarPattern(path, pattern string) bool {
 
 // IsExported reports whether a name is exported.
 func IsExported(name string) bool {
-	if name == "" {
-		return false
-	}
-	return name[0] >= 'A' && name[0] <= 'Z'
+	return ast.IsExported(name)
 }

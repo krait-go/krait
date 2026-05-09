@@ -18,6 +18,8 @@ func New() analyzer.Analyzer {
 	return &complexityAnalyzer{}
 }
 
+var _ analyzer.Analyzer = (*complexityAnalyzer)(nil)
+
 func (a *complexityAnalyzer) Name() string {
 	return "complexity"
 }
@@ -534,7 +536,10 @@ func buildHotspots(metrics []funcMetric) []map[string]any {
 		if sorted[i].cyclomatic != sorted[j].cyclomatic {
 			return sorted[i].cyclomatic > sorted[j].cyclomatic
 		}
-		return sorted[i].cognitive > sorted[j].cognitive
+		if sorted[i].cognitive != sorted[j].cognitive {
+			return sorted[i].cognitive > sorted[j].cognitive
+		}
+		return sorted[i].name < sorted[j].name
 	})
 
 	limit := 10

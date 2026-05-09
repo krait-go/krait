@@ -1,6 +1,7 @@
 package architecture
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ type architectureAnalyzer struct{}
 func New() analyzer.Analyzer {
 	return &architectureAnalyzer{}
 }
+
+var _ analyzer.Analyzer = (*architectureAnalyzer)(nil)
 
 func (a *architectureAnalyzer) Name() string {
 	return "architecture"
@@ -101,6 +104,8 @@ func computeCoupling(metrics map[string]*pkgMetrics) {
 		if m.Ca+m.Ce > 0 {
 			m.Instability = float64(m.Ce) / float64(m.Ca+m.Ce)
 		}
+		sort.Strings(m.Imports)
+		sort.Strings(m.ImportedBy)
 	}
 }
 
@@ -146,9 +151,17 @@ func detectViolations(
 	cfg *analyzer.Config,
 	layerCanImport map[string]map[string]bool,
 ) ([]*analyzer.Finding, int) {
+	// Sort keys so findings are produced in deterministic order.
+	pkgKeys := make([]string, 0, len(metrics))
+	for k := range metrics {
+		pkgKeys = append(pkgKeys, k)
+	}
+	sort.Strings(pkgKeys)
+
 	var findings []*analyzer.Finding
 	totalEdges := 0
-	for _, m := range metrics {
+	for _, key := range pkgKeys {
+		m := metrics[key]
 		totalEdges += m.Ce
 		findings = append(findings, detectLayerViolations(project, m, metrics, cfg, layerCanImport)...)
 		findings = append(findings, detectGodPackage(m, cfg)...)
@@ -239,8 +252,16 @@ func detectGodPackage(m *pkgMetrics, cfg *analyzer.Config) []*analyzer.Finding {
 
 // buildArchStats constructs the stats map for the result.
 func buildArchStats(metrics map[string]*pkgMetrics, totalEdges int) map[string]any {
+	// Sort keys so the package_metrics list is produced in deterministic order.
+	pkgKeys := make([]string, 0, len(metrics))
+	for k := range metrics {
+		pkgKeys = append(pkgKeys, k)
+	}
+	sort.Strings(pkgKeys)
+
 	pkgMetricsList := make([]map[string]any, 0, len(metrics))
-	for _, m := range metrics {
+	for _, key := range pkgKeys {
+		m := metrics[key]
 		pkgMetricsList = append(pkgMetricsList, map[string]any{
 			"rel_path":    m.RelPath,
 			"imports":     m.Ce,

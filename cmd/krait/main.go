@@ -65,7 +65,8 @@ func globalFlags() []cli.Flag {
 }
 
 func runAnalyzers(cmd *cli.Command, analyzers []analyzer.Analyzer) error {
-	totalStart := time.Now()
+	startTime := time.Now().UTC()
+	totalStart := startTime
 
 	// Resolve directory — positional arg overrides --dir flag
 	dir := cmd.String("dir")
@@ -107,7 +108,7 @@ func runAnalyzers(cmd *cli.Command, analyzers []analyzer.Analyzer) error {
 	}
 
 	// Build report
-	report := buildReport(dir, results, time.Since(totalStart))
+	report := buildReport(dir, results, time.Since(totalStart), startTime)
 
 	// Determine format
 	format := cmd.String("format")
@@ -132,7 +133,7 @@ func runAnalyzers(cmd *cli.Command, analyzers []analyzer.Analyzer) error {
 	return nil
 }
 
-func buildReport(rootDir string, results []*analyzer.Result, totalDuration time.Duration) *analyzer.Report {
+func buildReport(rootDir string, results []*analyzer.Result, totalDuration time.Duration, startTime time.Time) *analyzer.Report {
 	summary := analyzer.ReportSummary{
 		BySeverity: make(map[analyzer.Severity]int),
 		ByCategory: make(map[analyzer.Category]int),
@@ -153,7 +154,7 @@ func buildReport(rootDir string, results []*analyzer.Result, totalDuration time.
 
 	return &analyzer.Report{
 		Version:       version,
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Timestamp:     startTime.Format(time.RFC3339),
 		RootDir:       absDir,
 		TotalDuration: totalDuration.Round(time.Millisecond).String(),
 		Summary:       summary,

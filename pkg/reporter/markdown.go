@@ -8,10 +8,20 @@ import (
 	"github.com/krait-go/krait/pkg/analyzer"
 )
 
+var mdReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`|`, `\|`,
+	"`", "\\`",
+	`*`, `\*`,
+	`_`, `\_`,
+	`[`, `\[`,
+	`]`, `\]`,
+	`<`, `\<`,
+	`>`, `\>`,
+)
+
 func escapeMarkdown(s string) string {
-	s = strings.ReplaceAll(s, "|", "\\|")
-	s = strings.ReplaceAll(s, "`", "\\`")
-	return s
+	return mdReplacer.Replace(s)
 }
 
 func formatMarkdown(w io.Writer, report *analyzer.Report) error {

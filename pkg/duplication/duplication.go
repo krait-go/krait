@@ -26,6 +26,8 @@ func New() analyzer.Analyzer {
 	return &duplicanalyzer{}
 }
 
+var _ analyzer.Analyzer = (*duplicanalyzer)(nil)
+
 func (d *duplicanalyzer) Name() string {
 	return "duplication"
 }
@@ -103,8 +105,11 @@ func collectAndGroupWindows(project *analyzer.Project, minStmts int) []*cloneGro
 	}
 	groups = filterSelfSimilar(groups)
 
-	sort.Slice(groups, func(i, j int) bool {
-		return groups[i].StmtCount > groups[j].StmtCount
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].StmtCount != groups[j].StmtCount {
+			return groups[i].StmtCount > groups[j].StmtCount
+		}
+		return groups[i].Hash < groups[j].Hash
 	})
 	if len(groups) > maxCloneGroups {
 		groups = groups[:maxCloneGroups]
@@ -115,8 +120,16 @@ func collectAndGroupWindows(project *analyzer.Project, minStmts int) []*cloneGro
 // collectWindows slides a window of minStmts across every function body and
 // returns all windows up to the maxWindows cap.
 func collectWindows(project *analyzer.Project, minStmts int) []*stmtWindow {
+	// Sort file paths so windows are collected in deterministic order.
+	filePaths := make([]string, 0, len(project.Files))
+	for fp := range project.Files {
+		filePaths = append(filePaths, fp)
+	}
+	sort.Strings(filePaths)
+
 	var allWindows []*stmtWindow
-	for filePath, file := range project.Files {
+	for _, filePath := range filePaths {
+		file := project.Files[filePath]
 		relFile := parser.RelPath(project.RootDir, filePath)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -160,8 +173,17 @@ func buildCloneGroups(allWindows []*stmtWindow) []*cloneGroup {
 	for _, w := range allWindows {
 		grouped[w.Hash] = append(grouped[w.Hash], w)
 	}
+
+	// Collect hash keys in sorted order so group construction is deterministic.
+	hashes := make([]uint64, 0, len(grouped))
+	for h := range grouped {
+		hashes = append(hashes, h)
+	}
+	sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
+
 	var groups []*cloneGroup
-	for h, windows := range grouped {
+	for _, h := range hashes {
+		windows := grouped[h]
 		if len(windows) < 2 {
 			continue
 		}
@@ -298,6 +320,58 @@ func fingerprintStatements(stmts []ast.Stmt) uint64 {
 	return h.Sum64()
 }
 
+// nodeTagMap maps AST node types to unique byte tags for structural fingerprinting.
+// Using reflect.Type as key avoids a 38-case type switch while keeping O(1) lookup.
+var nodeTagMap = func() map[reflect.Type]byte {
+	m := map[reflect.Type]byte{
+		reflect.TypeOf((*ast.File)(nil)):           1,
+		reflect.TypeOf((*ast.FuncDecl)(nil)):       2,
+		reflect.TypeOf((*ast.BlockStmt)(nil)):      3,
+		reflect.TypeOf((*ast.IfStmt)(nil)):         4,
+		reflect.TypeOf((*ast.ForStmt)(nil)):        5,
+		reflect.TypeOf((*ast.RangeStmt)(nil)):      6,
+		reflect.TypeOf((*ast.SwitchStmt)(nil)):     7,
+		reflect.TypeOf((*ast.TypeSwitchStmt)(nil)): 8,
+		reflect.TypeOf((*ast.SelectStmt)(nil)):     9,
+		reflect.TypeOf((*ast.CaseClause)(nil)):     10,
+		reflect.TypeOf((*ast.CommClause)(nil)):     11,
+		reflect.TypeOf((*ast.ReturnStmt)(nil)):     12,
+		reflect.TypeOf((*ast.AssignStmt)(nil)):     13,
+		reflect.TypeOf((*ast.ExprStmt)(nil)):       14,
+		reflect.TypeOf((*ast.DeclStmt)(nil)):       15,
+		reflect.TypeOf((*ast.DeferStmt)(nil)):      16,
+		reflect.TypeOf((*ast.GoStmt)(nil)):         17,
+		reflect.TypeOf((*ast.SendStmt)(nil)):       18,
+		reflect.TypeOf((*ast.IncDecStmt)(nil)):     19,
+		reflect.TypeOf((*ast.BranchStmt)(nil)):     20,
+		reflect.TypeOf((*ast.LabeledStmt)(nil)):    21,
+		reflect.TypeOf((*ast.CallExpr)(nil)):       22,
+		reflect.TypeOf((*ast.BinaryExpr)(nil)):     23,
+		reflect.TypeOf((*ast.UnaryExpr)(nil)):      24,
+		reflect.TypeOf((*ast.SelectorExpr)(nil)):   25,
+		reflect.TypeOf((*ast.IndexExpr)(nil)):      26,
+		reflect.TypeOf((*ast.SliceExpr)(nil)):      27,
+		reflect.TypeOf((*ast.TypeAssertExpr)(nil)): 28,
+		reflect.TypeOf((*ast.StarExpr)(nil)):       29,
+		reflect.TypeOf((*ast.ParenExpr)(nil)):      30,
+		reflect.TypeOf((*ast.CompositeLit)(nil)):   31,
+		reflect.TypeOf((*ast.FuncLit)(nil)):        32,
+		reflect.TypeOf((*ast.BasicLit)(nil)):       33,
+		reflect.TypeOf((*ast.Ident)(nil)):          34,
+		reflect.TypeOf((*ast.KeyValueExpr)(nil)):   35,
+		reflect.TypeOf((*ast.ArrayType)(nil)):      36,
+		reflect.TypeOf((*ast.MapType)(nil)):        37,
+		reflect.TypeOf((*ast.Ellipsis)(nil)):       38,
+	}
+	return m
+}()
+
+// writeNodeTag writes a single byte tag identifying the AST node type into h.
+func writeNodeTag(h hash.Hash64, n ast.Node) {
+	tag := nodeTagMap[reflect.TypeOf(n)]
+	_, _ = h.Write([]byte{tag})
+}
+
 // fingerprintNode walks all AST nodes and writes structural markers into h.
 // Identifier names are intentionally excluded to match renamed clones.
 func fingerprintNode(h hash.Hash64, node ast.Node) {
@@ -305,8 +379,8 @@ func fingerprintNode(h hash.Hash64, node ast.Node) {
 		if n == nil {
 			return false
 		}
-		// Write node type.
-		_, _ = h.Write([]byte(reflect.TypeOf(n).String()))
+		// Write node type tag.
+		writeNodeTag(h, n)
 
 		switch x := n.(type) {
 		case *ast.BinaryExpr:

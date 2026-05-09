@@ -13,6 +13,9 @@ type Project struct {
 	Packages   map[string]*PackageInfo
 	Files      map[string]*ast.File
 	GoModDeps  []GoModDep
+	// Warnings holds non-fatal messages from parsing (e.g. individual files that
+	// failed to parse). Callers may surface these to the user.
+	Warnings []string
 }
 
 // PackageInfo groups files belonging to the same Go package.

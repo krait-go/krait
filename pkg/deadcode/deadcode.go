@@ -2,7 +2,9 @@ package deadcode
 
 import (
 	"go/ast"
+	"go/token"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,6 +56,8 @@ func New() analyzer.Analyzer {
 	return &deadCodeAnalyzer{}
 }
 
+var _ analyzer.Analyzer = (*deadCodeAnalyzer)(nil)
+
 func (d *deadCodeAnalyzer) Name() string {
 	return "dead-code"
 }
@@ -77,23 +81,39 @@ func (d *deadCodeAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Conf
 		}
 	}
 
+	// Build a method index: maps "pkgPath.MethodName" -> list of full 3-segment keys.
+	// This is needed because collectReferences builds 2-segment keys (importPath.SelectorName)
+	// when it sees pkg.Method, but methods are keyed as pkgPath.RecvType.Name in decls.
+	methodIndex := buildMethodIndex(decls)
+
 	// Step 2: Build a cross-package reference map by walking SelectorExpr nodes.
 	refs := make(map[string]int)
 	for _, pkg := range project.Packages {
 		for _, file := range pkg.Files {
-			collectReferences(file, pkg.ImportPath, refs)
+			collectReferences(file, pkg.ImportPath, refs, methodIndex)
 		}
 	}
 
 	// Step 3: Build findings for declarations with zero cross-package references.
+	// Sort keys so findings are produced in deterministic order.
+	declKeys := make([]string, 0, len(decls))
+	for k := range decls {
+		declKeys = append(declKeys, k)
+	}
+	sort.Strings(declKeys)
+
 	unusedByKind := make(map[string]int)
 	var findings []*analyzer.Finding
 
-	for key, decl := range decls {
+	for _, key := range declKeys {
+		decl := decls[key]
 		if refs[key] > 0 {
 			continue
 		}
 		ruleName := kindToRule(decl.Kind)
+		if ruleName == "" {
+			continue
+		}
 		sev, ok := analyzer.ResolveSeverity(ruleName, analyzer.SeverityWarning, cfg)
 		if !ok {
 			continue
@@ -140,6 +160,7 @@ func (d *deadCodeAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.Conf
 }
 
 // kindToRule maps a declaration kind to its lint rule name.
+// Returns "" for unknown kinds so callers can skip the finding.
 func kindToRule(kind string) string {
 	switch kind {
 	case "func":
@@ -150,8 +171,10 @@ func kindToRule(kind string) string {
 		return "unused-export-type"
 	case "var":
 		return "unused-export-var"
-	default:
+	case "const":
 		return "unused-export-const"
+	default:
+		return ""
 	}
 }
 
@@ -289,7 +312,7 @@ func collectValueSpec(
 	decls map[string]*declaration,
 ) {
 	kind := "var"
-	if fd.Tok.String() == "const" {
+	if fd.Tok == token.CONST {
 		kind = "const"
 	}
 	for _, vname := range s.Names {
@@ -310,12 +333,31 @@ func collectValueSpec(
 	}
 }
 
+// buildMethodIndex constructs a map from "pkgPath.MethodName" to the list of
+// full 3-segment declaration keys ("pkgPath.RecvType.MethodName") for all method
+// declarations. This allows collectReferences to resolve 2-segment selector
+// references (importPath.SelectorName) to the correct 3-segment method keys.
+func buildMethodIndex(decls map[string]*declaration) map[string][]string {
+	index := make(map[string][]string)
+	for fullKey, decl := range decls {
+		if decl.Kind != "method" {
+			continue
+		}
+		shortKey := decl.PkgPath + "." + decl.Name
+		index[shortKey] = append(index[shortKey], fullKey)
+	}
+	return index
+}
+
 // collectReferences increments refs["importPath.SymbolName"] for every
 // SelectorExpr in file where the qualifier resolves to a known external import.
+// For method references that resolve to a 2-segment key, it also increments
+// the corresponding 3-segment keys via methodIndex.
 func collectReferences(
 	file *ast.File,
 	currentPkg string,
 	refs map[string]int,
+	methodIndex map[string][]string,
 ) {
 	importMap := buildImportMap(file)
 
@@ -336,7 +378,13 @@ func collectReferences(
 		if importPath == currentPkg {
 			return true
 		}
-		refs[importPath+"."+sel.Sel.Name]++
+		key := importPath + "." + sel.Sel.Name
+		refs[key]++
+		// Also propagate the reference to any method declarations keyed under
+		// the 3-segment form (pkgPath.RecvType.MethodName).
+		for _, fullKey := range methodIndex[key] {
+			refs[fullKey]++
+		}
 		return true
 	})
 }
