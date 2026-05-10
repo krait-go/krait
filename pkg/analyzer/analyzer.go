@@ -140,11 +140,11 @@ func defaultRules() map[string]Severity {
 		"code-duplication":           SeverityWarning,
 		"god-package":                SeverityWarning,
 		"layer-violation":            SeverityError,
-		"unused-file":               SeverityWarning,
-		"circular-dependency":       SeverityWarning,
-		"churn-hotspot":             SeverityInfo,
-		"low-health-score":          SeverityError,
-		"stale-suppression":         SeverityWarning,
+		"unused-file":                SeverityWarning,
+		"circular-dependency":        SeverityWarning,
+		"churn-hotspot":              SeverityInfo,
+		"low-health-score":           SeverityError,
+		"stale-suppression":          SeverityWarning,
 	}
 }
 

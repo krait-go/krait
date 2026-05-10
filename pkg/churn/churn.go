@@ -215,22 +215,7 @@ func extractComplexities(results []*analyzer.Result) map[string]float64 {
 		}
 
 		// Primary: scan individual findings.
-		for _, f := range r.Findings {
-			cycloRaw, ok := f.Meta["cyclomatic"]
-			if !ok {
-				continue
-			}
-			file := f.Location.File
-			if file == "" {
-				continue
-			}
-			cyclo := toFloat64(cycloRaw)
-			if _, exists := byFile[file]; !exists {
-				byFile[file] = &fileAcc{}
-			}
-			byFile[file].sum += cyclo
-			byFile[file].count++
-		}
+		extractFromFindings(r.Findings, byFile)
 
 		// Fallback: use complexity_hotspots from stats if no findings populated the map.
 		if len(byFile) == 0 {
@@ -247,6 +232,27 @@ func extractComplexities(results []*analyzer.Result) map[string]float64 {
 		}
 	}
 	return result
+}
+
+// extractFromFindings scans complexity analyzer findings for Meta["cyclomatic"]
+// and accumulates per-file sums into byFile.
+func extractFromFindings(findings []*analyzer.Finding, byFile map[string]*fileAcc) {
+	for _, f := range findings {
+		cycloRaw, ok := f.Meta["cyclomatic"]
+		if !ok {
+			continue
+		}
+		file := f.Location.File
+		if file == "" {
+			continue
+		}
+		cyclo := toFloat64(cycloRaw)
+		if _, exists := byFile[file]; !exists {
+			byFile[file] = &fileAcc{}
+		}
+		byFile[file].sum += cyclo
+		byFile[file].count++
+	}
 }
 
 // extractFromHotspots reads the []map[string]any hotspots slice from the

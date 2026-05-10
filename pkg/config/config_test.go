@@ -138,4 +138,3 @@ func TestValidate_UnknownLayerInCanImport(t *testing.T) {
 		t.Error("expected error for unknown layer in can_import, got nil")
 	}
 }
-

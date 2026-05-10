@@ -87,6 +87,22 @@ func globalFlags() []cli.Flag {
 func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers []analyzer.PostAnalyzer, includeScore bool) error {
 	startTime := time.Now().UTC()
 
+	project, cfg, err := loadProjectConfig(cmd)
+	if err != nil {
+		return err
+	}
+
+	results, err := executeAnalyzers(project, cfg, analyzers, postAnalyzers, includeScore)
+	if err != nil {
+		return err
+	}
+
+	return applySuppressionsAndReport(cmd, project, results, startTime)
+}
+
+// loadProjectConfig resolves the project directory, loads and validates config,
+// applies flag overrides, and parses the project AST.
+func loadProjectConfig(cmd *cli.Command) (*analyzer.Project, *analyzer.Config, error) {
 	dir := cmd.String("dir")
 	if cmd.Args().Len() > 0 {
 		dir = cmd.Args().First()
@@ -94,20 +110,32 @@ func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers 
 
 	cfg, err := config.Load(dir)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return nil, nil, fmt.Errorf("loading config: %w", err)
 	}
 	if cmd.Bool("tests") {
 		cfg.IncludeTests = true
 	}
 	if err := config.Validate(cfg); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
+		return nil, nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	project, err := parser.Parse(dir, cfg)
 	if err != nil {
-		return fmt.Errorf("parsing project: %w", err)
+		return nil, nil, fmt.Errorf("parsing project: %w", err)
 	}
 
+	return project, cfg, nil
+}
+
+// executeAnalyzers runs the parallel analyzers, then the sequential
+// post-analyzers, and optionally appends a health score result.
+func executeAnalyzers(
+	project *analyzer.Project,
+	cfg *analyzer.Config,
+	analyzers []analyzer.Analyzer,
+	postAnalyzers []analyzer.PostAnalyzer,
+	includeScore bool,
+) ([]*analyzer.Result, error) {
 	// Run analyzers in parallel.
 	results := make([]*analyzer.Result, len(analyzers))
 	g, _ := errgroup.WithContext(context.Background())
@@ -123,14 +151,14 @@ func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers 
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Run post-analyzers sequentially.
 	for _, pa := range postAnalyzers {
 		result, err := pa.PostAnalyze(project, cfg, results)
 		if err != nil {
-			return fmt.Errorf("post-analyzer %s: %w", pa.Name(), err)
+			return nil, fmt.Errorf("post-analyzer %s: %w", pa.Name(), err)
 		}
 		result.DurationMs = result.Duration.Milliseconds()
 		results = append(results, result)
@@ -141,12 +169,18 @@ func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers 
 		h := health.New()
 		result, err := h.PostAnalyze(project, cfg, results)
 		if err != nil {
-			return fmt.Errorf("health score: %w", err)
+			return nil, fmt.Errorf("health score: %w", err)
 		}
 		result.DurationMs = result.Duration.Milliseconds()
 		results = append(results, result)
 	}
 
+	return results, nil
+}
+
+// applySuppressionsAndReport applies suppression filters, formats the report,
+// and enforces CI and threshold exit conditions.
+func applySuppressionsAndReport(cmd *cli.Command, project *analyzer.Project, results []*analyzer.Result, startTime time.Time) error {
 	// Suppression filtering.
 	suppMap := suppression.BuildMapFromProject(project)
 	for _, r := range results {
@@ -157,6 +191,10 @@ func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers 
 		}
 	}
 
+	dir := cmd.String("dir")
+	if cmd.Args().Len() > 0 {
+		dir = cmd.Args().First()
+	}
 	report := buildReport(dir, results, time.Since(startTime), startTime)
 
 	format := cmd.String("format")

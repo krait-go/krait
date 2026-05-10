@@ -86,7 +86,7 @@ func (a *unusedFilesAnalyzer) Analyze(project *analyzer.Project, cfg *analyzer.C
 					Line: 1,
 				},
 				Meta: map[string]any{
-					"package": pkgPath,
+					"package":  pkgPath,
 					"rel_path": pkgRelPath,
 				},
 			})
@@ -147,7 +147,7 @@ func findEntryPoints(project *analyzer.Project) map[string]bool {
 	entries := make(map[string]bool)
 
 	for pkgPath, pkg := range project.Packages {
-		if pkg.Name == "main" {
+		if isMainPackage(pkg) {
 			entries[pkgPath] = true
 		}
 	}
@@ -155,6 +155,22 @@ func findEntryPoints(project *analyzer.Project) map[string]bool {
 	// Blank imports act as explicit entry-point declarations: they pull in a
 	// package's init() side-effects without referencing any symbol. Any
 	// internally-blank-imported package is therefore live.
+	for depPath := range collectBlankImportTargets(project) {
+		entries[depPath] = true
+	}
+
+	return entries
+}
+
+// isMainPackage reports whether the package is a main package.
+func isMainPackage(pkg *analyzer.PackageInfo) bool {
+	return pkg.Name == "main"
+}
+
+// collectBlankImportTargets returns the set of internal package paths that are
+// blank-imported anywhere in the project (i.e., `_ "pkg"`).
+func collectBlankImportTargets(project *analyzer.Project) map[string]bool {
+	targets := make(map[string]bool)
 	for _, pkg := range project.Packages {
 		for _, file := range pkg.Files {
 			for _, imp := range file.Imports {
@@ -166,13 +182,12 @@ func findEntryPoints(project *analyzer.Project) map[string]bool {
 				}
 				depPath := strings.Trim(imp.Path.Value, `"`)
 				if strings.HasPrefix(depPath, project.ModulePath) {
-					entries[depPath] = true
+					targets[depPath] = true
 				}
 			}
 		}
 	}
-
-	return entries
+	return targets
 }
 
 // bfsReachable performs a breadth-first search starting from the given entry

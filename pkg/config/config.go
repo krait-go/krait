@@ -53,6 +53,20 @@ func Load(dir string) (*analyzer.Config, error) {
 
 // Validate checks the config for invalid values.
 func Validate(cfg *analyzer.Config) error {
+	if err := validateThresholds(cfg); err != nil {
+		return err
+	}
+	if err := validateRuleSeverities(cfg); err != nil {
+		return err
+	}
+	if err := validateLayers(cfg); err != nil {
+		return err
+	}
+	return validateHealthConfig(cfg)
+}
+
+// validateThresholds checks numeric threshold fields.
+func validateThresholds(cfg *analyzer.Config) error {
 	if cfg.CyclomaticThreshold < 1 {
 		return fmt.Errorf("cyclomatic_threshold must be >= 1, got %d", cfg.CyclomaticThreshold)
 	}
@@ -62,7 +76,12 @@ func Validate(cfg *analyzer.Config) error {
 	if cfg.MinDuplicateLines < 2 {
 		return fmt.Errorf("min_duplicate_lines must be >= 2, got %d", cfg.MinDuplicateLines)
 	}
+	return nil
+}
 
+// validateRuleSeverities normalizes "warn" aliases and checks that every rule
+// maps to a known severity level.
+func validateRuleSeverities(cfg *analyzer.Config) error {
 	// Normalize "warn" to "warning" to match the JSON schema alias.
 	for rule, sev := range cfg.Rules {
 		if sev == "warn" {
@@ -88,7 +107,12 @@ func Validate(cfg *analyzer.Config) error {
 		}
 	}
 
-	layerNames := make(map[string]bool)
+	return nil
+}
+
+// validateLayers checks that every can_import reference names a known layer.
+func validateLayers(cfg *analyzer.Config) error {
+	layerNames := make(map[string]bool, len(cfg.ArchitectureLayers))
 	for _, layer := range cfg.ArchitectureLayers {
 		layerNames[layer.Name] = true
 	}
@@ -99,7 +123,11 @@ func Validate(cfg *analyzer.Config) error {
 			}
 		}
 	}
+	return nil
+}
 
+// validateHealthConfig checks the health weight values and the minimum score.
+func validateHealthConfig(cfg *analyzer.Config) error {
 	if cfg.HealthWeights != nil {
 		w := cfg.HealthWeights
 		if w.DeadCode < 0 || w.Duplication < 0 || w.Complexity < 0 || w.Architecture < 0 || w.Dependencies < 0 {
@@ -109,6 +137,5 @@ func Validate(cfg *analyzer.Config) error {
 	if cfg.MinHealthScore < 0 || cfg.MinHealthScore > 100 {
 		return fmt.Errorf("min_health_score must be 0-100, got %d", cfg.MinHealthScore)
 	}
-
 	return nil
 }
