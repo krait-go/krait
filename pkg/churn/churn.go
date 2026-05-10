@@ -5,6 +5,7 @@ package churn
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -161,15 +162,10 @@ func (a *PostAnalyzer) PostAnalyze(project *analyzer.Project, cfg *analyzer.Conf
 // collectChurnCounts shells out to git and counts how many times each .go file
 // was modified during the given period.
 func collectChurnCounts(rootDir, sinceArg string) (map[string]int, error) {
-	cmd := exec.Command(
-		"git", "log",
-		"--format=",
-		"--name-only",
-		"--diff-filter=M",
-		"--since="+sinceArg,
-		"--",
-		"*.go",
-	)
+	// sinceArg is already validated by ParsePeriod (e.g. "6.months.ago").
+	args := []string{"log", "--format=", "--name-only", "--diff-filter=M", "--since=" + sinceArg, "--", "*.go"}
+	ctx := context.Background()
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // sinceArg is validated by ParsePeriod
 	cmd.Dir = rootDir
 
 	var stdout, stderr bytes.Buffer
@@ -292,7 +288,11 @@ func toFloat64(v any) float64 {
 }
 
 // buildHotspots assembles, sorts, and caps the hotspot list.
-func buildHotspots(churnCounts map[string]int, complexities map[string]float64, riskScores map[string]float64) []hotspotEntry {
+func buildHotspots(
+	churnCounts map[string]int,
+	complexities map[string]float64,
+	riskScores map[string]float64,
+) []hotspotEntry {
 	entries := make([]hotspotEntry, 0, len(churnCounts))
 	for file, churn := range churnCounts {
 		entries = append(entries, hotspotEntry{

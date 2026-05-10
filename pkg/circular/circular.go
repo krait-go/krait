@@ -21,10 +21,12 @@ func New() analyzer.Analyzer {
 
 var _ analyzer.Analyzer = (*Analyzer)(nil)
 
+// Name returns the analyzer name.
 func (a *Analyzer) Name() string {
 	return "circular"
 }
 
+// Description returns a human-readable description.
 func (a *Analyzer) Description() string {
 	return "Detects circular import dependencies between packages"
 }

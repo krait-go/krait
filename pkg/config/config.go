@@ -7,8 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/krait-go/krait/pkg/analyzer"
 	"github.com/tailscale/hujson"
+
+	"github.com/krait-go/krait/pkg/analyzer"
 )
 
 // Load searches for a config file and returns the merged configuration.

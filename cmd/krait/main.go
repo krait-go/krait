@@ -154,28 +154,35 @@ func executeAnalyzers(
 		return nil, err
 	}
 
-	// Run post-analyzers sequentially.
+	// Run post-analyzers sequentially, collecting into a separate slice
+	// to avoid appending to the pre-allocated results slice (makezero).
+	var postResults []*analyzer.Result
 	for _, pa := range postAnalyzers {
 		result, err := pa.PostAnalyze(project, cfg, results)
 		if err != nil {
 			return nil, fmt.Errorf("post-analyzer %s: %w", pa.Name(), err)
 		}
 		result.DurationMs = result.Duration.Milliseconds()
-		results = append(results, result)
+		postResults = append(postResults, result)
 	}
+
+	// Merge results for post-analyzers and optional health score.
+	all := make([]*analyzer.Result, 0, len(results)+len(postResults)+1)
+	all = append(all, results...)
+	all = append(all, postResults...)
 
 	// If --score and health not already included.
 	if includeScore && !hasPostAnalyzer(postAnalyzers, "health") {
 		h := health.New()
-		result, err := h.PostAnalyze(project, cfg, results)
+		result, err := h.PostAnalyze(project, cfg, all)
 		if err != nil {
 			return nil, fmt.Errorf("health score: %w", err)
 		}
 		result.DurationMs = result.Duration.Milliseconds()
-		results = append(results, result)
+		all = append(all, result)
 	}
 
-	return results, nil
+	return all, nil
 }
 
 // applySuppressionsAndReport applies suppression filters, formats the report,

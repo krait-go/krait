@@ -13,8 +13,9 @@ import (
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/krait-go/krait/pkg/analyzer"
 	"golang.org/x/mod/modfile"
+
+	"github.com/krait-go/krait/pkg/analyzer"
 )
 
 // Parse parses all Go files in the given root directory.
