@@ -12,7 +12,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/krait-go/krait/pkg/analyzer"
+	"golang.org/x/mod/modfile"
 )
 
 // Parse parses all Go files in the given root directory.
@@ -51,90 +53,29 @@ func Parse(rootDir string, cfg *analyzer.Config) (*analyzer.Project, error) {
 	}, nil
 }
 
-// parseGoMod does a basic line-by-line parse of go.mod.
+// parseGoMod parses go.mod using golang.org/x/mod/modfile.
 func parseGoMod(path string) (string, []analyzer.GoModDep, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-
-	var modulePath string
-	var deps []analyzer.GoModDep
-	lines := strings.Split(string(data), "\n")
-	inRequire := false
-	lineNum := 0
-
-	for _, line := range lines {
-		lineNum++
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "module ") {
-			modulePath = strings.TrimSpace(strings.TrimPrefix(trimmed, "module "))
-			continue
-		}
-
-		if trimmed == "require (" {
-			inRequire = true
-			continue
-		}
-		if trimmed == ")" {
-			inRequire = false
-			continue
-		}
-
-		if inRequire {
-			if dep, ok := parseRequireEntry(trimmed, lineNum); ok {
-				deps = append(deps, dep)
-			}
-			continue
-		}
-
-		// Handle single-line require
-		if dep, ok := parseSingleLineRequire(trimmed, lineNum); ok {
-			deps = append(deps, dep)
-		}
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
-
-	if modulePath == "" {
+	if f.Module == nil {
 		return "", nil, fmt.Errorf("no module directive found in %s", path)
 	}
-
-	return modulePath, deps, nil
-}
-
-// parseRequireEntry parses a single dependency line inside a require ( ... ) block.
-func parseRequireEntry(trimmed string, lineNum int) (analyzer.GoModDep, bool) {
-	if trimmed == "" || strings.HasPrefix(trimmed, "//") {
-		return analyzer.GoModDep{}, false
+	var deps []analyzer.GoModDep
+	for _, req := range f.Require {
+		deps = append(deps, analyzer.GoModDep{
+			Path:     req.Mod.Path,
+			Version:  req.Mod.Version,
+			Indirect: req.Indirect,
+			Line:     req.Syntax.Start.Line,
+		})
 	}
-	parts := strings.Fields(trimmed)
-	if len(parts) < 2 {
-		return analyzer.GoModDep{}, false
-	}
-	return analyzer.GoModDep{
-		Path:     parts[0],
-		Version:  parts[1],
-		Indirect: strings.Contains(trimmed, "// indirect"),
-		Line:     lineNum,
-	}, true
-}
-
-// parseSingleLineRequire parses a single-line require directive, e.g. `require foo v1.0.0`.
-func parseSingleLineRequire(trimmed string, lineNum int) (analyzer.GoModDep, bool) {
-	if !strings.HasPrefix(trimmed, "require ") || strings.Contains(trimmed, "(") {
-		return analyzer.GoModDep{}, false
-	}
-	rest := strings.TrimPrefix(trimmed, "require ")
-	parts := strings.Fields(rest)
-	if len(parts) < 2 {
-		return analyzer.GoModDep{}, false
-	}
-	return analyzer.GoModDep{
-		Path:     parts[0],
-		Version:  parts[1],
-		Indirect: strings.Contains(trimmed, "// indirect"),
-		Line:     lineNum,
-	}, true
+	return f.Module.Mod.Path, deps, nil
 }
 
 // collectGoFiles walks the directory tree and returns all .go file paths.
@@ -289,55 +230,13 @@ func RelPath(rootDir, absPath string) string {
 }
 
 // MatchesAny checks if a relative path matches any of the given glob patterns.
-// Supports ** by checking if any path segment matches the core pattern.
 func MatchesAny(relPath string, patterns []string) bool {
 	for _, pattern := range patterns {
-		if matchPattern(relPath, pattern) {
+		if matched, _ := doublestar.Match(pattern, relPath); matched {
 			return true
 		}
 	}
 	return false
-}
-
-// matchPattern matches a path against a pattern that may contain **.
-func matchPattern(path, pattern string) bool {
-	if strings.Contains(pattern, "**") {
-		return matchDoubleStarPattern(path, pattern)
-	}
-	// Simple glob match against the full path, then the filename.
-	if matched, _ := filepath.Match(pattern, path); matched {
-		return true
-	}
-	matched, _ := filepath.Match(pattern, filepath.Base(path))
-	return matched
-}
-
-// matchDoubleStarPattern handles patterns containing **, splitting on the first
-// ** to derive a prefix and suffix anchor and testing both against the path.
-func matchDoubleStarPattern(path, pattern string) bool {
-	parts := strings.Split(pattern, "**")
-	if len(parts) != 2 {
-		return false
-	}
-	prefix := strings.Trim(parts[0], "/")
-	suffix := strings.Trim(parts[1], "/")
-
-	if prefix == "" && suffix == "" {
-		return true
-	}
-	if prefix != "" && suffix == "" {
-		return strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix)
-	}
-	if prefix == "" {
-		// suffix-only: match against filename or path suffix
-		if matched, _ := filepath.Match(suffix, filepath.Base(path)); matched {
-			return true
-		}
-		return strings.HasSuffix(path, suffix)
-	}
-	// Both prefix and suffix present.
-	return (strings.Contains(path, prefix+"/") || strings.HasPrefix(path, prefix)) &&
-		(strings.HasSuffix(path, suffix) || strings.Contains(path, suffix+"/"))
 }
 
 // IsExported reports whether a name is exported.

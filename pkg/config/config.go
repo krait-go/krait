@@ -2,13 +2,13 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/krait-go/krait/pkg/analyzer"
+	"github.com/tailscale/hujson"
 )
 
 // Load searches for a config file and returns the merged configuration.
@@ -36,7 +36,10 @@ func Load(dir string) (*analyzer.Config, error) {
 			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
 
-		data = stripJSONCComments(data)
+		data, err = hujson.Standardize(data)
+		if err != nil {
+			return nil, fmt.Errorf("standardizing JSONC in %s: %w", path, err)
+		}
 
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", path, err)
@@ -97,48 +100,15 @@ func Validate(cfg *analyzer.Config) error {
 		}
 	}
 
+	if cfg.HealthWeights != nil {
+		w := cfg.HealthWeights
+		if w.DeadCode < 0 || w.Duplication < 0 || w.Complexity < 0 || w.Architecture < 0 || w.Dependencies < 0 {
+			return fmt.Errorf("health_weights values must be non-negative")
+		}
+	}
+	if cfg.MinHealthScore < 0 || cfg.MinHealthScore > 100 {
+		return fmt.Errorf("min_health_score must be 0-100, got %d", cfg.MinHealthScore)
+	}
+
 	return nil
-}
-
-// stripJSONCComments removes // comments from JSONC content.
-func stripJSONCComments(data []byte) []byte {
-	lines := bytes.Split(data, []byte("\n"))
-	var result []byte
-	for i, line := range lines {
-		stripped := stripLineComment(line)
-		result = append(result, stripped...)
-		if i < len(lines)-1 {
-			result = append(result, '\n')
-		}
-	}
-	return result
-}
-
-func stripLineComment(line []byte) []byte {
-	inString := false
-	escaped := false
-	for i := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-		switch line[i] {
-		case '\\':
-			if inString {
-				escaped = true
-			}
-		case '"':
-			inString = !inString
-		case '/':
-			if !inString && i+1 < len(line) && line[i+1] == '/' {
-				// Trim trailing whitespace before the comment
-				trimmed := line[:i]
-				for len(trimmed) > 0 && (trimmed[len(trimmed)-1] == ' ' || trimmed[len(trimmed)-1] == '\t') {
-					trimmed = trimmed[:len(trimmed)-1]
-				}
-				return trimmed
-			}
-		}
-	}
-	return line
 }

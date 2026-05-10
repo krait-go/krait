@@ -27,6 +27,9 @@ const (
 	CategoryComplexity   Category = "complexity"
 	CategoryArchitecture Category = "architecture"
 	CategoryDependency   Category = "dependency"
+	CategoryCircular     Category = "circular"
+	CategoryHealth       Category = "health"
+	CategorySuppression  Category = "suppression"
 )
 
 // Location identifies a position in source code.
@@ -93,6 +96,9 @@ type Config struct {
 	ArchitectureLayers  []LayerConfig       `json:"architecture_layers"`
 	IgnoreExports       []string            `json:"ignore_exports"`
 	GodPackageThreshold int                 `json:"god_package_threshold"`
+	ChurnPeriod         string              `json:"churn_period"`
+	MinHealthScore      int                 `json:"min_health_score"`
+	HealthWeights       *HealthWeights      `json:"health_weights"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -114,6 +120,9 @@ func DefaultConfig() *Config {
 		MinDuplicateTokens:  50,
 		GodPackageThreshold: 10,
 		IgnoreExports:       []string{"New*", "Must*", "Register*"},
+		ChurnPeriod:         "6m",
+		MinHealthScore:      0,
+		HealthWeights:       DefaultHealthWeights(),
 	}
 }
 
@@ -131,6 +140,11 @@ func defaultRules() map[string]Severity {
 		"code-duplication":           SeverityWarning,
 		"god-package":                SeverityWarning,
 		"layer-violation":            SeverityError,
+		"unused-file":               SeverityWarning,
+		"circular-dependency":       SeverityWarning,
+		"churn-hotspot":             SeverityInfo,
+		"low-health-score":          SeverityError,
+		"stale-suppression":         SeverityWarning,
 	}
 }
 

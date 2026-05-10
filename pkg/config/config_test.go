@@ -50,7 +50,7 @@ func TestLoad_ValidConfigFile(t *testing.T) {
 	}
 }
 
-func TestLoad_JSNCCommentStripping(t *testing.T) {
+func TestLoad_JSONCCommentStripping(t *testing.T) {
 	dir := t.TempDir()
 	// .krait.jsonc with comments — should parse correctly.
 	content := `{
@@ -139,34 +139,3 @@ func TestValidate_UnknownLayerInCanImport(t *testing.T) {
 	}
 }
 
-func TestStripJSONCComments_CommentOutsideString(t *testing.T) {
-	input := []byte(`{"key": "value"} // comment`)
-	result := stripJSONCComments(input)
-	got := string(result)
-	want := `{"key": "value"}`
-	if got != want {
-		t.Errorf("stripJSONCComments = %q, want %q", got, want)
-	}
-}
-
-func TestStripJSONCComments_CommentInsideString(t *testing.T) {
-	// The // inside a string should not be stripped.
-	input := []byte(`{"key": "http://example.com"}`)
-	result := stripJSONCComments(input)
-	got := string(result)
-	// Should be unchanged.
-	if got != string(input) {
-		t.Errorf("stripJSONCComments changed string with URL: got %q, want %q", got, string(input))
-	}
-}
-
-func TestStripJSONCComments_MultiLine(t *testing.T) {
-	input := []byte("{\n  // comment line\n  \"k\": 1\n}")
-	result := stripJSONCComments(input)
-	got := string(result)
-	// Comment line should be stripped to empty.
-	expected := "{\n\n  \"k\": 1\n}"
-	if got != expected {
-		t.Errorf("stripJSONCComments multiline = %q, want %q", got, expected)
-	}
-}

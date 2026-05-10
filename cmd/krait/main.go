@@ -8,17 +8,24 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/krait-go/krait/internal/parser"
 	"github.com/krait-go/krait/pkg/analyzer"
 	"github.com/krait-go/krait/pkg/architecture"
+	"github.com/krait-go/krait/pkg/churn"
+	"github.com/krait-go/krait/pkg/circular"
 	"github.com/krait-go/krait/pkg/complexity"
 	"github.com/krait-go/krait/pkg/config"
 	"github.com/krait-go/krait/pkg/deadcode"
 	"github.com/krait-go/krait/pkg/deps"
 	"github.com/krait-go/krait/pkg/duplication"
+	"github.com/krait-go/krait/pkg/health"
 	"github.com/krait-go/krait/pkg/reporter"
+	"github.com/krait-go/krait/pkg/suppression"
+	"github.com/krait-go/krait/pkg/unusedfiles"
 )
 
 var version = "dev"
@@ -30,6 +37,15 @@ func allAnalyzers() []analyzer.Analyzer {
 		complexity.New(),
 		architecture.New(),
 		deps.New(),
+		unusedfiles.New(),
+		circular.New(),
+	}
+}
+
+func allPostAnalyzers() []analyzer.PostAnalyzer {
+	return []analyzer.PostAnalyzer{
+		churn.New(),
+		health.New(),
 	}
 }
 
@@ -61,67 +77,96 @@ func globalFlags() []cli.Flag {
 			Name:  "ci",
 			Usage: "CI mode: JSON output, exit 1 on any error-severity finding",
 		},
+		&cli.BoolFlag{
+			Name:  "score",
+			Usage: "Include health score in output",
+		},
 	}
 }
 
-func runAnalyzers(cmd *cli.Command, analyzers []analyzer.Analyzer) error {
+func runAnalysis(cmd *cli.Command, analyzers []analyzer.Analyzer, postAnalyzers []analyzer.PostAnalyzer, includeScore bool) error {
 	startTime := time.Now().UTC()
-	totalStart := startTime
 
-	// Resolve directory — positional arg overrides --dir flag
 	dir := cmd.String("dir")
 	if cmd.Args().Len() > 0 {
 		dir = cmd.Args().First()
 	}
 
-	// Load config
 	cfg, err := config.Load(dir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-
-	// Apply flag overrides
 	if cmd.Bool("tests") {
 		cfg.IncludeTests = true
 	}
-
-	// Validate config
 	if err := config.Validate(cfg); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Parse project
 	project, err := parser.Parse(dir, cfg)
 	if err != nil {
 		return fmt.Errorf("parsing project: %w", err)
 	}
 
-	// Run analyzers
-	var results []*analyzer.Result
-	for _, a := range analyzers {
-		result, err := a.Analyze(project, cfg)
+	// Run analyzers in parallel.
+	results := make([]*analyzer.Result, len(analyzers))
+	g, _ := errgroup.WithContext(context.Background())
+	for i, a := range analyzers {
+		g.Go(func() error {
+			result, err := a.Analyze(project, cfg)
+			if err != nil {
+				return fmt.Errorf("analyzer %s: %w", a.Name(), err)
+			}
+			result.DurationMs = result.Duration.Milliseconds()
+			results[i] = result
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Run post-analyzers sequentially.
+	for _, pa := range postAnalyzers {
+		result, err := pa.PostAnalyze(project, cfg, results)
 		if err != nil {
-			return fmt.Errorf("analyzer %s: %w", a.Name(), err)
+			return fmt.Errorf("post-analyzer %s: %w", pa.Name(), err)
 		}
 		result.DurationMs = result.Duration.Milliseconds()
 		results = append(results, result)
 	}
 
-	// Build report
-	report := buildReport(dir, results, time.Since(totalStart), startTime)
+	// If --score and health not already included.
+	if includeScore && !hasPostAnalyzer(postAnalyzers, "health") {
+		h := health.New()
+		result, err := h.PostAnalyze(project, cfg, results)
+		if err != nil {
+			return fmt.Errorf("health score: %w", err)
+		}
+		result.DurationMs = result.Duration.Milliseconds()
+		results = append(results, result)
+	}
 
-	// Determine format
+	// Suppression filtering.
+	suppMap := suppression.BuildMapFromProject(project)
+	for _, r := range results {
+		filtered, staleFindings := suppMap.Filter(r.Findings)
+		r.Findings = filtered
+		if len(staleFindings) > 0 {
+			r.Findings = append(r.Findings, staleFindings...)
+		}
+	}
+
+	report := buildReport(dir, results, time.Since(startTime), startTime)
+
 	format := cmd.String("format")
 	if cmd.Bool("ci") {
 		format = "json"
 	}
-
-	// Output
 	if err := reporter.Format(os.Stdout, report, format); err != nil {
 		return fmt.Errorf("formatting output: %w", err)
 	}
 
-	// Exit code logic
 	if cmd.Bool("ci") && report.Summary.BySeverity[analyzer.SeverityError] > 0 {
 		return fmt.Errorf("CI check failed: %d error-severity findings", report.Summary.BySeverity[analyzer.SeverityError])
 	}
@@ -131,6 +176,15 @@ func runAnalyzers(cmd *cli.Command, analyzers []analyzer.Analyzer) error {
 	}
 
 	return nil
+}
+
+func hasPostAnalyzer(postAnalyzers []analyzer.PostAnalyzer, name string) bool {
+	for _, pa := range postAnalyzers {
+		if pa.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func buildReport(rootDir string, results []*analyzer.Result, totalDuration time.Duration, startTime time.Time) *analyzer.Report {
@@ -202,42 +256,70 @@ func main() {
 				Name:  "check",
 				Usage: "Run all analyzers",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, allAnalyzers())
+					return runAnalysis(cmd, allAnalyzers(), allPostAnalyzers(), true)
 				},
 			},
 			{
 				Name:  "dead",
 				Usage: "Run dead code analyzer",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, []analyzer.Analyzer{deadcode.New()})
+					return runAnalysis(cmd, []analyzer.Analyzer{deadcode.New()}, nil, cmd.Bool("score"))
 				},
 			},
 			{
 				Name:  "dupes",
 				Usage: "Run code duplication analyzer",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, []analyzer.Analyzer{duplication.New()})
+					return runAnalysis(cmd, []analyzer.Analyzer{duplication.New()}, nil, cmd.Bool("score"))
 				},
 			},
 			{
 				Name:  "complexity",
 				Usage: "Run complexity analyzer",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, []analyzer.Analyzer{complexity.New()})
+					return runAnalysis(cmd, []analyzer.Analyzer{complexity.New()}, nil, cmd.Bool("score"))
 				},
 			},
 			{
 				Name:  "arch",
 				Usage: "Run architecture analyzer",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, []analyzer.Analyzer{architecture.New()})
+					return runAnalysis(cmd, []analyzer.Analyzer{architecture.New()}, nil, cmd.Bool("score"))
 				},
 			},
 			{
 				Name:  "deps",
 				Usage: "Run dependency analyzer",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runAnalyzers(cmd, []analyzer.Analyzer{deps.New()})
+					return runAnalysis(cmd, []analyzer.Analyzer{deps.New()}, nil, cmd.Bool("score"))
+				},
+			},
+			{
+				Name:  "unused",
+				Usage: "Run unused files/packages analyzer",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return runAnalysis(cmd, []analyzer.Analyzer{unusedfiles.New()}, nil, cmd.Bool("score"))
+				},
+			},
+			{
+				Name:  "circular",
+				Usage: "Run circular dependency analyzer",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return runAnalysis(cmd, []analyzer.Analyzer{circular.New()}, nil, cmd.Bool("score"))
+				},
+			},
+			{
+				Name:  "hotspots",
+				Usage: "Run git churn hotspot analyzer",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return runAnalysis(cmd, []analyzer.Analyzer{complexity.New()}, []analyzer.PostAnalyzer{churn.New()}, cmd.Bool("score"))
+				},
+			},
+			{
+				Name:  "health",
+				Usage: "Run all analyzers and show health score",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return runAnalysis(cmd, allAnalyzers(), allPostAnalyzers(), true)
 				},
 			},
 			initCmd(),
